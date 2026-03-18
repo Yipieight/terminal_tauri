@@ -6,6 +6,9 @@ on:
       - 'v*'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     strategy:
@@ -15,7 +18,7 @@ jobs:
           - platform: macos-latest
             target: aarch64-apple-darwin
             label: macOS-ARM64
-          - platform: macos-13
+          - platform: macos-latest
             target: x86_64-apple-darwin
             label: macOS-Intel
           - platform: windows-latest
