@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="/node_modules/xp.css/dist/XP.css" />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MiShell - Windows XP</title>
+    <script type="module" src="/src/main.ts" defer></script>
+  </head>
+
+  <body>
+    <!-- ═══ BOOT SCREEN ═══ -->
+    <div id="boot-screen">
+      <div class="boot-content">
+        <div class="boot-logo">
+          <div class="boot-logo-text">
+            <span class="boot-ms">Mi</span><span class="boot-xp">Shell</span>
+          </div>
+          <div class="boot-subtitle">Professional</div>
+        </div>
+        <div class="boot-progress-container">
+          <div class="boot-progress-track">
+            <div class="boot-progress-fill"></div>
+          </div>
+        </div>
+        <div class="boot-footer">
+          <div class="boot-copyright">Built with Tauri v2 + Rust</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ LOGIN SCREEN ═══ -->
+    <div id="login-screen" style="display: none">
+      <div class="login-header">
+        <div class="login-header-text">To begin, click your user name</div>
+      </div>
+      <div class="login-body">
+        <div class="login-user-card" id="login-card">
+          <div class="login-avatar">&#128100;</div>
+          <div class="login-user-info">
+            <div class="login-username">User</div>
+            <div class="login-password-row">
+              <input
+                type="password"
+                id="login-password"
+                class="login-password-input"
+                placeholder="Type your password"
+              />
+              <button id="login-btn" class="login-go-btn">&#10132;</button>
+            </div>
+            <div class="login-hint">Hint: just press Enter</div>
+          </div>
+        </div>
+      </div>
+      <div class="login-footer">
+        <div class="login-footer-options">
+          <span>After you log on, you can add or change accounts.</span>
+        </div>
+        <div class="login-footer-branding">
+          <span class="boot-ms">Mi</span><span class="boot-xp">Shell</span>
+          <span class="login-edition">Professional</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ DESKTOP ═══ -->
+    <div id="desktop" style="display: none">
+      <div id="desktop-icons"></div>
+    </div>
+
+    <!-- ═══ TASKBAR ═══ -->
+    <div id="taskbar" style="display: none">
+      <button id="start-button">
+        <span class="start-logo">&#127987;&#65039;</span>
+        <span class="start-text">start</span>
+      </button>
+      <div id="running-apps"></div>
+      <div id="system-tray">
+        <span id="clock">12:00 PM</span>
+      </div>
+    </div>
+
+    <!-- ═══ START MENU ═══ -->
+    <div id="start-menu" style="display: none"></div>
+
+    <!-- ═══ SHUTDOWN SCREEN ═══ -->
+    <div id="shutdown-screen" style="display: none">
+      <div class="shutdown-content">
+        <div class="shutdown-title">
+          <span class="boot-ms">Mi</span><span class="boot-xp">Shell</span>
+        </div>
+        <div class="shutdown-status">Saving your settings...</div>
+        <div class="shutdown-spinner">
+          <div class="spinner-dot"></div>
+          <div class="spinner-dot"></div>
+          <div class="spinner-dot"></div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>
