@@ -1,77 +1,63 @@
 /**
- * MiShell - Boot / Login / Shutdown Sequence
+ * MiShell - Boot / Shutdown Sequence
  *
  * Provides the full Windows XP lifecycle:
- *   1. Boot screen with animated loading bar
- *   2. Login screen with user avatar
- *   3. Desktop (managed by desktop.ts)
- *   4. Shutdown animation with "saving settings" message
+ *   1. Boot screen with XP-style animated sliding blocks
+ *   2. Desktop (managed by desktop.ts)
+ *   3. Shutdown animation with "saving settings" message
+ *
+ * The boot screen mimics the classic Windows XP startup with:
+ *   - Animated flag logo that assembles piece by piece
+ *   - Three blue blocks sliding back and forth
+ *   - Status messages cycling during boot
  */
 
 // ─── Boot Screen ──────────────────────────────────────────────
 export function showBootScreen(): Promise<void> {
   return new Promise((resolve) => {
     const boot = document.getElementById("boot-screen")!;
+    const statusEl = document.getElementById("boot-status")!;
     boot.style.display = "flex";
 
-    const progressBar = boot.querySelector(".boot-progress-fill") as HTMLElement;
-    let progress = 0;
+    // Status messages that cycle during boot (simulates real boot)
+    const messages = [
+      "",
+      "Initializing virtual filesystem...",
+      "Loading system drivers...",
+      "Preparing MiShell environment...",
+      "Mounting virtual disk...",
+      "Starting shell services...",
+      "Applying user settings...",
+      "Almost ready...",
+    ];
 
-    const interval = setInterval(() => {
-      // Non-linear progress for realism
-      const increment = progress < 60 ? 2.5 : progress < 85 ? 1.5 : 0.8;
-      progress = Math.min(100, progress + increment + Math.random() * 1.5);
-      progressBar.style.width = `${progress}%`;
+    let msgIndex = 0;
 
-      if (progress >= 100) {
-        clearInterval(interval);
-        // Brief pause at 100%
-        setTimeout(() => {
-          boot.classList.add("fade-out");
-          setTimeout(() => {
-            boot.style.display = "none";
-            boot.classList.remove("fade-out");
-            resolve();
-          }, 500);
-        }, 400);
+    // Cycle through boot messages
+    const msgInterval = setInterval(() => {
+      msgIndex++;
+      if (msgIndex < messages.length) {
+        statusEl.textContent = messages[msgIndex];
+        statusEl.classList.add("status-fade");
+        setTimeout(() => statusEl.classList.remove("status-fade"), 300);
       }
-    }, 80);
-  });
-}
+    }, 700);
 
-// ─── Login Screen ─────────────────────────────────────────────
-export function showLoginScreen(): Promise<void> {
-  return new Promise((resolve) => {
-    const login = document.getElementById("login-screen")!;
-    login.style.display = "flex";
-    login.classList.add("fade-in");
+    // Total boot duration: ~5.5 seconds
+    const bootDuration = 5500;
 
-    const loginBtn = document.getElementById("login-btn")!;
-    const passwordInput = document.getElementById("login-password") as HTMLInputElement;
+    setTimeout(() => {
+      clearInterval(msgInterval);
 
-    function doLogin(): void {
-      // Disable button
-      loginBtn.textContent = "Loading...";
-      (loginBtn as HTMLButtonElement).disabled = true;
+      // Fade out the entire boot screen
+      boot.classList.add("fade-out");
 
-      // "Loading profile" animation
       setTimeout(() => {
-        login.classList.add("fade-out");
-        setTimeout(() => {
-          login.style.display = "none";
-          login.classList.remove("fade-in", "fade-out");
-          resolve();
-        }, 600);
+        boot.style.display = "none";
+        boot.classList.remove("fade-out");
+        resolve();
       }, 800);
-    }
-
-    loginBtn.addEventListener("click", doLogin);
-    passwordInput.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") doLogin();
-    });
-
-    // Focus password field
-    setTimeout(() => passwordInput.focus(), 600);
+    }, bootDuration);
   });
 }
 
@@ -93,7 +79,7 @@ export function showShutdown(): Promise<void> {
       "Saving your settings...",
       "Closing network connections...",
       "Writing system log...",
-      "Windows is shutting down...",
+      "MiShell is shutting down...",
     ];
 
     let msgIndex = 0;
