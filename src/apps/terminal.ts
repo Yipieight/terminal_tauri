@@ -102,58 +102,19 @@ ${"─".repeat(50)}`;
     // Get current prompt text for the echoed command line
     appendText(`${prompt.textContent}${trimmed}`, "command-line");
 
-    // Frontend-only commands
-    if (trimmed === "clear") {
-      output.innerHTML = "";
-      return;
-    }
-
-    if (trimmed === "help") {
-      appendText(
-        `Available commands:
-  ls [path]           List directory contents
-  cd [path]           Change directory
-  pwd                 Print working directory
-  mkdir [-p] <path>   Create directory
-  touch <file>        Create empty file
-  cat <file>          Read file content
-  echo <text>         Print text
-  echo <text> > file  Write text to file
-  rm [-r] <path>      Remove file or directory
-  cp <src> <dst>      Copy file
-  mv <src> <dst>      Move/rename
-  find [path] [name]  Search for files
-  grep <pat> [file]   Search text (supports pipes)
-  wc [-l|-w|-c]       Word/line/char count
-  head [-n N] [file]  Show first N lines
-  tail [-n N] [file]  Show last N lines
-  sort [file]         Sort lines
-  uniq                Remove duplicate lines
-  whoami              Show current user
-  hostname            Show hostname
-  uname               Show OS info
-  date                Show current date
-  history             Show command history
-  clear               Clear terminal
-  help                Show this help
-  cmd1 | cmd2         Pipe commands
-  cmd > file          Redirect output to file
-
-  TAB                 Autocomplete commands and paths
-  Arrow Up/Down       Navigate command history`,
-        "system-msg"
-      );
-      return;
-    }
-
     // Send to Rust backend
     try {
       const result: CommandResult = await invoke("execute_command", {
         input: trimmed,
       });
 
-      if (result.stdout) {
-        appendText(result.stdout, "stdout");
+      // Handle special clear signal from backend
+      if (result.stdout === "\x1B[CLEAR]") {
+        output.innerHTML = "";
+      } else {
+        if (result.stdout) {
+          appendText(result.stdout, "stdout");
+        }
       }
       if (result.stderr) {
         appendText(result.stderr, "stderr");
