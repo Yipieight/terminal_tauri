@@ -2,12 +2,102 @@
  * MiShell - File Explorer App
  *
  * Windows XP-style file explorer with tree view, file listing,
- * and basic file operations (create folder, delete, rename).
+ * and basic file operations (create folder/file, delete, rename).
+ *
+ * Uses custom XP-style dialog boxes instead of native prompt/confirm
+ * since Tauri doesn't support native JS dialogs reliably.
  */
 
 import { invoke } from "@tauri-apps/api/core";
 import type { FsEntry, FsTreeNode } from "../types";
 
+// ── XP-style Dialog Helpers ───────────────────────────────────
+function showXpDialog(
+  title: string,
+  message: string,
+  inputDefault?: string
+): Promise<string | null> {
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.style.cssText = `
+      position: fixed; inset: 0; background: rgba(0,0,0,0.3);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 99999;
+    `;
+
+    const isPrompt = inputDefault !== undefined;
+
+    const dialog = document.createElement("div");
+    dialog.className = "window";
+    dialog.style.cssText = `
+      width: 340px; position: relative; box-shadow: 2px 2px 10px rgba(0,0,0,0.5);
+    `;
+
+    dialog.innerHTML = `
+      <div class="title-bar">
+        <div class="title-bar-text">${title}</div>
+      </div>
+      <div class="window-body" style="padding: 12px;">
+        <p style="margin: 0 0 10px; font-size: 11px;">${message}</p>
+        ${isPrompt ? `<input type="text" value="${inputDefault}" style="width: 100%; box-sizing: border-box; padding: 3px 6px; font-size: 12px;" />` : ""}
+        <div style="display: flex; justify-content: flex-end; gap: 6px; margin-top: 14px;">
+          <button class="xp-dialog-ok" style="min-width: 70px;">OK</button>
+          <button class="xp-dialog-cancel" style="min-width: 70px;">Cancel</button>
+        </div>
+      </div>
+    `;
+
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+
+    const input = dialog.querySelector("input") as HTMLInputElement | null;
+    const okBtn = dialog.querySelector(".xp-dialog-ok") as HTMLButtonElement;
+    const cancelBtn = dialog.querySelector(".xp-dialog-cancel") as HTMLButtonElement;
+
+    function cleanup(result: string | null) {
+      overlay.remove();
+      resolve(result);
+    }
+
+    okBtn.addEventListener("click", () => {
+      if (isPrompt && input) {
+        const val = input.value.trim();
+        cleanup(val || null);
+      } else {
+        cleanup("ok");
+      }
+    });
+
+    cancelBtn.addEventListener("click", () => cleanup(null));
+
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) cleanup(null);
+    });
+
+    // Enter/Escape keyboard shortcuts
+    const keyHandler = (e: KeyboardEvent) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        okBtn.click();
+      } else if (e.key === "Escape") {
+        cleanup(null);
+      }
+    };
+    overlay.addEventListener("keydown", keyHandler);
+
+    // Focus input or OK button
+    setTimeout(() => {
+      if (input) {
+        input.focus();
+        input.select();
+      } else {
+        okBtn.focus();
+      }
+    }, 50);
+  });
+}
+
+// ── File Explorer ─────────────────────────────────────────────
 export function mountFileExplorer(
   container: HTMLElement,
   initialPath?: string
@@ -68,13 +158,6 @@ export function mountFileExplorer(
   const contextMenu = document.createElement("div");
   contextMenu.className = "explorer-context-menu";
   contextMenu.style.display = "none";
-  contextMenu.innerHTML = `
-    <button class="context-item" data-action="new-folder">New Folder</button>
-    <button class="context-item" data-action="new-file">New File</button>
-    <hr />
-    <button class="context-item" data-action="delete">Delete</button>
-    <button class="context-item" data-action="rename">Rename</button>
-  `;
   explorer.appendChild(contextMenu);
 
   // ── References ────────────────────────────────────────────
@@ -85,7 +168,6 @@ export function mountFileExplorer(
   // ── Navigation functions ──────────────────────────────────
   function navigateTo(path: string, addToHistory = true): void {
     if (addToHistory) {
-      // Truncate forward history
       historyStack.length = historyPos + 1;
       historyStack.push(path);
       historyPos = historyStack.length - 1;
@@ -93,6 +175,10 @@ export function mountFileExplorer(
     currentPath = path;
     addressInput.value = path;
     refreshFileList();
+  }
+
+  function buildPath(name: string): string {
+    return currentPath === "/" ? `/${name}` : `${currentPath}/${name}`;
   }
 
   async function refreshFileList(): Promise<void> {
@@ -116,7 +202,13 @@ export function mountFileExplorer(
       return;
     }
 
-    entries.forEach((entry) => {
+    // Sort: directories first, then files
+    const sorted = [...entries].sort((a, b) => {
+      if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+
+    sorted.forEach((entry) => {
       const item = document.createElement("div");
       item.className = "explorer-file-item";
       item.dataset.name = entry.name;
@@ -128,34 +220,184 @@ export function mountFileExplorer(
         <div class="explorer-file-name">${entry.name}</div>
       `;
 
-      // Double click to open
+      // Double click to open folder
       item.addEventListener("dblclick", () => {
         if (entry.is_dir) {
-          const newPath =
-            currentPath === "/"
-              ? `/${entry.name}`
-              : `${currentPath}/${entry.name}`;
-          navigateTo(newPath);
+          navigateTo(buildPath(entry.name));
         }
       });
 
       // Single click to select
-      item.addEventListener("click", () => {
+      item.addEventListener("click", (e) => {
+        e.stopPropagation();
         filePanel
           .querySelectorAll(".explorer-file-item")
           .forEach((el) => el.classList.remove("selected"));
         item.classList.add("selected");
       });
 
-      // Right click context menu
+      // Right click on file/folder
       item.addEventListener("contextmenu", (e) => {
         e.preventDefault();
-        showContextMenu(e.clientX, e.clientY, entry.name, entry.is_dir);
+        e.stopPropagation();
+        // Select the item visually
+        filePanel
+          .querySelectorAll(".explorer-file-item")
+          .forEach((el) => el.classList.remove("selected"));
+        item.classList.add("selected");
+        openContextMenu(e.clientX, e.clientY, entry.name);
       });
 
       filePanel.appendChild(item);
     });
   }
+
+  // ── Context Menu Logic ──────────────────────────────────────
+  let contextTargetName: string | null = null;
+
+  function openContextMenu(x: number, y: number, targetName: string | null): void {
+    contextTargetName = targetName;
+    const hasTarget = targetName !== null;
+
+    // Build menu items dynamically based on context
+    contextMenu.innerHTML = `
+      <button class="context-item" data-action="new-folder">📁 New Folder</button>
+      <button class="context-item" data-action="new-file">📄 New File</button>
+      ${hasTarget ? `
+        <hr />
+        <button class="context-item" data-action="rename">✏️ Rename</button>
+        <button class="context-item context-item-danger" data-action="delete">🗑️ Delete</button>
+      ` : ""}
+    `;
+
+    // Position relative to the explorer container, clamped to bounds
+    const rect = explorer.getBoundingClientRect();
+    let left = x - rect.left;
+    let top = y - rect.top;
+
+    // Show temporarily to measure
+    contextMenu.style.display = "block";
+    const menuW = contextMenu.offsetWidth;
+    const menuH = contextMenu.offsetHeight;
+
+    // Clamp so it doesn't overflow
+    if (left + menuW > rect.width) left = rect.width - menuW - 4;
+    if (top + menuH > rect.height) top = rect.height - menuH - 4;
+    if (left < 0) left = 4;
+    if (top < 0) top = 4;
+
+    contextMenu.style.left = `${left}px`;
+    contextMenu.style.top = `${top}px`;
+  }
+
+  function hideContextMenu(): void {
+    contextMenu.style.display = "none";
+    contextTargetName = null;
+  }
+
+  // Right-click on empty area of file panel
+  filePanel.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    openContextMenu(e.clientX, e.clientY, null);
+  });
+
+  // Hide context menu on any click
+  document.addEventListener("click", hideContextMenu);
+
+  // Also hide if we scroll or resize
+  filePanel.addEventListener("scroll", hideContextMenu);
+
+  // Context menu action handler
+  contextMenu.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    const target = (e.target as HTMLElement).closest("[data-action]") as HTMLElement | null;
+    if (!target) return;
+
+    const action = target.dataset.action;
+    hideContextMenu();
+
+    switch (action) {
+      case "new-folder": {
+        const name = await showXpDialog(
+          "New Folder",
+          "Enter a name for the new folder:",
+          "New Folder"
+        );
+        if (name) {
+          try {
+            await invoke("fs_create_dir", { path: buildPath(name) });
+            refreshFileList();
+            refreshTree();
+          } catch (err) {
+            await showXpDialog("Error", `Could not create folder: ${err}`);
+          }
+        }
+        break;
+      }
+
+      case "new-file": {
+        const name = await showXpDialog(
+          "New File",
+          "Enter a name for the new file:",
+          "New File.txt"
+        );
+        if (name) {
+          try {
+            await invoke("execute_command", {
+              input: `touch ${buildPath(name)}`,
+            });
+            refreshFileList();
+            refreshTree();
+          } catch (err) {
+            await showXpDialog("Error", `Could not create file: ${err}`);
+          }
+        }
+        break;
+      }
+
+      case "delete": {
+        if (!contextTargetName) break;
+        const targetName = contextTargetName;
+        const confirmed = await showXpDialog(
+          "Confirm Delete",
+          `Are you sure you want to delete "${targetName}"?`
+        );
+        if (confirmed) {
+          try {
+            await invoke("fs_delete", { path: buildPath(targetName) });
+            refreshFileList();
+            refreshTree();
+          } catch (err) {
+            await showXpDialog("Error", `Could not delete: ${err}`);
+          }
+        }
+        break;
+      }
+
+      case "rename": {
+        if (!contextTargetName) break;
+        const targetName = contextTargetName;
+        const newName = await showXpDialog(
+          "Rename",
+          `Enter a new name for "${targetName}":`,
+          targetName
+        );
+        if (newName && newName !== targetName) {
+          try {
+            await invoke("fs_rename", {
+              oldPath: buildPath(targetName),
+              newPath: buildPath(newName),
+            });
+            refreshFileList();
+            refreshTree();
+          } catch (err) {
+            await showXpDialog("Error", `Could not rename: ${err}`);
+          }
+        }
+        break;
+      }
+    }
+  });
 
   // ── Tree view ─────────────────────────────────────────────
   async function refreshTree(): Promise<void> {
@@ -166,7 +408,7 @@ export function mountFileExplorer(
       });
       treeView.innerHTML = "";
       renderTreeNode(tree, treeView);
-    } catch (err) {
+    } catch (_err) {
       treeView.innerHTML = `<li>Error loading tree</li>`;
     }
   }
@@ -207,111 +449,6 @@ export function mountFileExplorer(
     parentUl.appendChild(li);
   }
 
-  // ── Context menu ──────────────────────────────────────────
-  let contextTargetName = "";
-
-  function showContextMenu(
-    x: number,
-    y: number,
-    name: string,
-    _isDir: boolean
-  ): void {
-    contextTargetName = name;
-
-    // Position relative to the explorer container
-    const rect = explorer.getBoundingClientRect();
-    contextMenu.style.left = `${x - rect.left}px`;
-    contextMenu.style.top = `${y - rect.top}px`;
-    contextMenu.style.display = "block";
-  }
-
-  // Right-click on empty area
-  filePanel.addEventListener("contextmenu", (e) => {
-    if (e.target === filePanel) {
-      e.preventDefault();
-      contextTargetName = "";
-      const rect = explorer.getBoundingClientRect();
-      contextMenu.style.left = `${e.clientX - rect.left}px`;
-      contextMenu.style.top = `${e.clientY - rect.top}px`;
-      contextMenu.style.display = "block";
-    }
-  });
-
-  // Hide context menu on click elsewhere
-  document.addEventListener("click", () => {
-    contextMenu.style.display = "none";
-  });
-
-  // Context menu actions
-  contextMenu.addEventListener("click", async (e) => {
-    const action = (e.target as HTMLElement).dataset.action;
-    if (!action) return;
-
-    contextMenu.style.display = "none";
-
-    if (action === "new-folder") {
-      const name = prompt("Folder name:");
-      if (name) {
-        try {
-          const path =
-            currentPath === "/"
-              ? `/${name}`
-              : `${currentPath}/${name}`;
-          await invoke("fs_create_dir", { path });
-          refreshFileList();
-          refreshTree();
-        } catch (err) {
-          alert(`Error: ${err}`);
-        }
-      }
-    } else if (action === "new-file") {
-      const name = prompt("File name:");
-      if (name) {
-        try {
-          await invoke("execute_command", {
-            input: `touch ${currentPath === "/" ? "" : currentPath}/${name}`,
-          });
-          refreshFileList();
-        } catch (err) {
-          alert(`Error: ${err}`);
-        }
-      }
-    } else if (action === "delete" && contextTargetName) {
-      if (confirm(`Delete "${contextTargetName}"?`)) {
-        try {
-          const path =
-            currentPath === "/"
-              ? `/${contextTargetName}`
-              : `${currentPath}/${contextTargetName}`;
-          await invoke("fs_delete", { path });
-          refreshFileList();
-          refreshTree();
-        } catch (err) {
-          alert(`Error: ${err}`);
-        }
-      }
-    } else if (action === "rename" && contextTargetName) {
-      const newName = prompt("New name:", contextTargetName);
-      if (newName && newName !== contextTargetName) {
-        try {
-          const oldPath =
-            currentPath === "/"
-              ? `/${contextTargetName}`
-              : `${currentPath}/${contextTargetName}`;
-          const newPath =
-            currentPath === "/"
-              ? `/${newName}`
-              : `${currentPath}/${newName}`;
-          await invoke("fs_rename", { oldPath, newPath });
-          refreshFileList();
-          refreshTree();
-        } catch (err) {
-          alert(`Error: ${err}`);
-        }
-      }
-    }
-  });
-
   // ── Toolbar events ────────────────────────────────────────
   toolbar.querySelector("#exp-back")!.addEventListener("click", () => {
     if (historyPos > 0) {
@@ -329,10 +466,8 @@ export function mountFileExplorer(
 
   toolbar.querySelector("#exp-up")!.addEventListener("click", () => {
     if (currentPath !== "/") {
-      const parentPath = currentPath.substring(
-        0,
-        currentPath.lastIndexOf("/")
-      ) || "/";
+      const parentPath =
+        currentPath.substring(0, currentPath.lastIndexOf("/")) || "/";
       navigateTo(parentPath);
     }
   });
