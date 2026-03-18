@@ -147,6 +147,77 @@ fn fs_get_tree(path: &str, depth: u32, state: State<'_, FsState>) -> Result<FsTr
     fs.get_tree(path, depth)
 }
 
+/// System statistics for the Task Manager.
+/// Returns filesystem stats, memory usage estimates, history count, and uptime.
+///
+/// PHASE 5 Note: This demonstrates how Rust tracks memory ownership.
+/// We can calculate exact memory usage because all data is in owned structures.
+/// In C, this would require manual tracking with global counters.
+#[derive(serde::Serialize)]
+struct SystemStats {
+    total_files: usize,
+    total_dirs: usize,
+    total_bytes: usize,
+    history_count: usize,
+    cwd: String,
+    /// Estimated heap memory used by the virtual filesystem (bytes)
+    estimated_memory: usize,
+    /// Process list: recent commands with simulated PID and memory
+    processes: Vec<ProcessInfo>,
+}
+
+#[derive(serde::Serialize)]
+struct ProcessInfo {
+    pid: usize,
+    name: String,
+    memory_kb: usize,
+    status: String,
+}
+
+#[tauri::command]
+fn get_system_stats(state: State<'_, FsState>) -> SystemStats {
+    let fs = state.fs.lock().unwrap();
+    let history = state.history.lock().unwrap();
+
+    let (files, dirs, bytes) = fs.root.stats();
+
+    // Estimate total heap memory: file content + node overhead + history strings
+    let node_overhead = (files + dirs) * 128; // ~128 bytes per node struct
+    let history_mem: usize = history.iter().map(|s| s.len() + 24).sum(); // String = ptr+len+cap + data
+    let estimated_memory = bytes + node_overhead + history_mem;
+
+    // Build a "process list" from recent history (simulated)
+    let processes: Vec<ProcessInfo> = history
+        .iter()
+        .enumerate()
+        .rev()
+        .take(15)
+        .map(|(i, cmd)| {
+            let cmd_name = cmd.split_whitespace().next().unwrap_or("unknown").to_string();
+            ProcessInfo {
+                pid: 1000 + i,
+                name: cmd_name,
+                memory_kb: (cmd.len() * 4) + 64, // simulated memory usage
+                status: if i == history.len() - 1 {
+                    "Running".to_string()
+                } else {
+                    "Finished".to_string()
+                },
+            }
+        })
+        .collect();
+
+    SystemStats {
+        total_files: files,
+        total_dirs: dirs,
+        total_bytes: bytes,
+        history_count: history.len(),
+        cwd: fs.cwd.clone(),
+        estimated_memory,
+        processes,
+    }
+}
+
 /// Returns the current working directory (for the terminal prompt)
 #[tauri::command]
 fn get_cwd(state: State<'_, FsState>) -> String {
@@ -164,9 +235,10 @@ fn autocomplete(input: &str, state: State<'_, FsState>) -> Vec<String> {
 
     // If input has no spaces, autocomplete command names
     if !trimmed.contains(' ') {
+        let lower = trimmed.to_lowercase();
         let mut matches: Vec<String> = virtual_fs::VirtualFs::available_commands()
             .iter()
-            .filter(|cmd| cmd.starts_with(trimmed))
+            .filter(|cmd| cmd.to_lowercase().starts_with(&lower))
             .map(|cmd| cmd.to_string())
             .collect();
         matches.sort();
@@ -222,6 +294,7 @@ pub fn run() {
             get_history,
             get_cwd,
             autocomplete,
+            get_system_stats,
             fs_list_dir,
             fs_read_file,
             fs_create_dir,
