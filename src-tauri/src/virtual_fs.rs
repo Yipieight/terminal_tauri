@@ -5,25 +5,94 @@
 // All shell commands operate on this virtual filesystem — NO real OS commands
 // are executed. This provides complete isolation (sandbox) from the host machine.
 //
-// PHASE 5 - Memory Management (Academic Rubric):
+// ─── PHASE 1: Terminal Básica (fork/exec equivalence) ────────────────────
+//
+// In a traditional C shell, command execution follows this pattern:
+//   1. fork()  → creates a child process (copy of the parent)
+//   2. exec()  → replaces the child's memory image with the target program
+//   3. wait()  → parent waits for child to finish
+//
+// In Rust/Tauri, this is handled differently but achieves the same goals:
+//   - fork() equivalent: Tauri's IPC system spawns commands on a separate
+//     thread pool. Each `#[tauri::command]` runs asynchronously, isolated
+//     from the main UI thread — similar to how fork() creates an isolated
+//     child process.
+//   - exec() equivalent: Instead of replacing process memory with execvp(),
+//     we dispatch to internal Rust functions (cmd_ls, cmd_cat, etc.) that
+//     execute the command logic directly. This is analogous to a "built-in
+//     shell command" approach (like cd, echo in bash), where the shell
+//     handles execution internally without spawning external binaries.
+//   - wait() equivalent: Rust's Mutex<VirtualFs> ensures sequential access.
+//     The calling thread blocks on mutex.lock() until the command completes,
+//     equivalent to waitpid() in C.
+//
+// The key insight: real shells use fork/exec because they need to run
+// EXTERNAL programs (like /usr/bin/ls). Our shell implements ALL commands
+// internally, so no external process spawning is needed. This is the same
+// approach used by shells like BusyBox, which embed all utilities.
+//
+// ─── PHASE 2: Parsing (Análisis de Comandos) ────────────────────────────
+//
+// Command parsing splits input by pipes (|) and redirection (> and <),
+// then tokenizes each segment respecting quoted strings.
+// In C, this requires manual memory management:
+//   - strtok() + malloc() for each token
+//   - A manually managed array of char* pointers
+//   - free() for all allocations when done
+// In Rust, String::split() + Vec::push() + iterators handle this with
+// automatic memory management. No leaks possible (RAII).
+//
+// ─── PHASE 3: Pipes ─────────────────────────────────────────────────────
+//
+// Since we don't spawn real OS processes, pipes are implemented as
+// string-based data flow: stdout of command N becomes stdin of command N+1.
+// This is conceptually identical to Unix pipe()/dup2():
+//   C:    pipe(fd) → fork() → dup2(fd[1], STDOUT) → exec()
+//   Rust: result.stdout → next command's current_stdin parameter
+// The data flows the same way, just through String buffers instead of
+// file descriptors.
+//
+// ─── PHASE 4: Redirección de Entrada/Salida ─────────────────────────────
+//
+// Output redirection (>): writes final stdout to a virtual file
+//   C equivalent: open(file, O_WRONLY|O_CREAT) → dup2(fd, STDOUT_FILENO)
+//   Rust: fs.write_file(filepath, &result.stdout)
+//
+// Input redirection (<): reads a virtual file as stdin for the command
+//   C equivalent: open(file, O_RDONLY) → dup2(fd, STDIN_FILENO)
+//   Rust: fs.get_node(file) → content passed as current_stdin
+//
+// ─── PHASE 5: Gestión de Memoria ────────────────────────────────────────
+//
 // The virtual filesystem uses Rust's ownership model extensively:
 //   - FsNode enum variants own their String names and Vec<FsNode> children
 //   - When a node is removed (rm), all its children are recursively dropped
 //     automatically — no manual free() or recursive cleanup needed
 //   - The entire VirtualFs is serialized/deserialized with serde, which
 //     handles all allocation/deallocation during JSON parsing
-//   - Mutex<VirtualFs> ensures thread-safe access without manual locking
+//   - Mutex<VirtualFs> ensures thread-safe access (equivalent to mutex_t
+//     in C pthreads) — prevents race conditions on shared state
 //
-// PHASE 1-2 - Parsing (Academic Rubric):
-// Command parsing splits input by pipes and redirection, then tokenizes
-// each segment. All intermediate Vec<String> and String allocations are
-// automatically freed when they go out of scope (RAII).
+// Memory comparison with C:
+//   C:    char* cmd = malloc(256); ... free(cmd);  // manual, error-prone
+//   Rust: let cmd = String::new(); // dropped automatically at scope end
+//   C:    char** history = malloc(n * sizeof(char*)); // must track size
+//   Rust: let history: Vec<String> = Vec::new();      // grows/frees auto
 //
-// PHASE 3-4 - Pipes and Redirection (Academic Rubric):
-// Since we don't spawn real OS processes, pipes are implemented as
-// string-based data flow: stdout of command N becomes stdin of command N+1.
-// This is conceptually identical to Unix pipes but operates on String buffers
-// instead of file descriptors. Redirection writes to virtual files.
+// Rust guarantees zero memory leaks through ownership + RAII. There is no
+// need for valgrind or AddressSanitizer — the compiler prevents leaks
+// at compile time.
+//
+// ─── PHASE 6: Historial de Comandos ─────────────────────────────────────
+//
+// Command history is stored in Tauri's managed state as Mutex<Vec<String>>.
+// This is equivalent to a dynamically-allocated linked list or array in C:
+//   C:    history[count++] = strdup(cmd);  // must free each entry later
+//   Rust: history.push(cmd.to_string());   // Vec grows automatically,
+//                                          // freed when state is dropped
+//
+// The Mutex ensures thread-safety (no race conditions between IPC calls),
+// equivalent to pthread_mutex_lock/unlock in C.
 // ═══════════════════════════════════════════════════════════════════════════
 
 use serde::{Deserialize, Serialize};
@@ -71,6 +140,25 @@ impl FsNode {
 
     pub fn is_file(&self) -> bool {
         matches!(self, FsNode::File { .. })
+    }
+
+    /// Recursively count files, directories, and total bytes in this node
+    pub fn stats(&self) -> (usize, usize, usize) {
+        match self {
+            FsNode::File { content, .. } => (1, 0, content.len()),
+            FsNode::Directory { children, .. } => {
+                let mut files = 0;
+                let mut dirs = 1; // count self
+                let mut bytes = 0;
+                for child in children {
+                    let (f, d, b) = child.stats();
+                    files += f;
+                    dirs += d;
+                    bytes += b;
+                }
+                (files, dirs, bytes)
+            }
+        }
     }
 
     fn new_dir(name: &str) -> Self {
@@ -1216,12 +1304,13 @@ impl VirtualFs {
             let dir_part = &partial[..=last_slash];
             let prefix = &partial[last_slash + 1..];
             let resolved_dir = self.resolve_path(dir_part);
+            let prefix_lower = prefix.to_lowercase();
 
             match self.get_node(&resolved_dir) {
                 Some(FsNode::Directory { children, .. }) => {
                     children
                         .iter()
-                        .filter(|c| c.name().starts_with(prefix))
+                        .filter(|c| c.name().to_lowercase().starts_with(&prefix_lower))
                         .map(|c| {
                             let suffix = if c.is_dir() { "/" } else { "" };
                             format!("{}{}{}", dir_part, c.name(), suffix)
@@ -1231,12 +1320,13 @@ impl VirtualFs {
                 _ => Vec::new(),
             }
         } else {
-            // No path separator — match in current directory
+            // No path separator — match in current directory (case-insensitive)
+            let partial_lower = partial.to_lowercase();
             match self.get_node(&self.cwd) {
                 Some(FsNode::Directory { children, .. }) => {
                     children
                         .iter()
-                        .filter(|c| c.name().starts_with(partial))
+                        .filter(|c| c.name().to_lowercase().starts_with(&partial_lower))
                         .map(|c| {
                             let suffix = if c.is_dir() { "/" } else { "" };
                             format!("{}{}", c.name(), suffix)
@@ -1367,7 +1457,10 @@ impl FsState {
 pub struct ParsedSegment {
     pub program: String,
     pub args: Vec<String>,
+    /// Output redirection: `command > file` writes stdout to file
     pub redirect_to: Option<String>,
+    /// Input redirection: `command < file` reads file as stdin
+    pub redirect_from: Option<String>,
 }
 
 /// Parse a raw input line into pipeline segments.
@@ -1384,8 +1477,8 @@ pub fn parse_input(input: &str) -> Vec<ParsedSegment> {
             continue;
         }
 
-        // Only the last segment can have redirection
-        let (cmd_part, redirect) = if i == segments.len() - 1 {
+        // Parse output redirection (>) — only on last segment
+        let (cmd_after_out, redirect_to) = if i == segments.len() - 1 {
             if let Some(pos) = trimmed.find('>') {
                 let cmd = trimmed[..pos].trim();
                 let file = trimmed[pos + 1..].trim();
@@ -1404,8 +1497,28 @@ pub fn parse_input(input: &str) -> Vec<ParsedSegment> {
             (trimmed, None)
         };
 
+        // Parse input redirection (<) — only on first segment
+        let (cmd_final, redirect_from) = if i == 0 {
+            if let Some(pos) = cmd_after_out.find('<') {
+                let cmd = cmd_after_out[..pos].trim();
+                let file = cmd_after_out[pos + 1..].trim();
+                (
+                    cmd,
+                    if file.is_empty() {
+                        None
+                    } else {
+                        Some(file.to_string())
+                    },
+                )
+            } else {
+                (cmd_after_out, None)
+            }
+        } else {
+            (cmd_after_out, None)
+        };
+
         // Tokenize respecting quoted strings
-        let tokens = tokenize(cmd_part);
+        let tokens = tokenize(cmd_final);
         if tokens.is_empty() {
             continue;
         }
@@ -1413,7 +1526,8 @@ pub fn parse_input(input: &str) -> Vec<ParsedSegment> {
         commands.push(ParsedSegment {
             program: tokens[0].clone(),
             args: tokens[1..].to_vec(),
-            redirect_to: redirect,
+            redirect_to,
+            redirect_from,
         });
     }
 
@@ -1486,6 +1600,33 @@ pub fn execute_pipeline(
 
     for (i, seg) in segments.iter().enumerate() {
         let is_last = i == segments.len() - 1;
+
+        // ── Input redirection (<) ──
+        // If the first segment has redirect_from, read the file content
+        // and use it as stdin for this command. This is equivalent to
+        // dup2(fd, STDIN_FILENO) in C after fork().
+        if let Some(ref input_file) = seg.redirect_from {
+            let resolved = fs.resolve_path(input_file);
+            match fs.get_node(&resolved) {
+                Some(FsNode::File { content, .. }) => {
+                    current_stdin = Some(content.clone());
+                }
+                Some(FsNode::Directory { .. }) => {
+                    return CommandResult {
+                        stdout: String::new(),
+                        stderr: format!("{}: Is a directory", input_file),
+                        exit_code: 1,
+                    };
+                }
+                None => {
+                    return CommandResult {
+                        stdout: String::new(),
+                        stderr: format!("{}: No such file or directory", input_file),
+                        exit_code: 1,
+                    };
+                }
+            }
+        }
 
         // Dispatch to the appropriate virtual command handler
         let result = match seg.program.as_str() {
@@ -1585,6 +1726,54 @@ pub fn execute_pipeline(
                     exit_code: 0,
                 }
             }
+            "help" => CommandResult {
+                stdout: [
+                    "MiShell v2.0 - Available Commands",
+                    "═════════════════════════════════════════",
+                    "",
+                    "  File Operations:",
+                    "    ls [path]         List directory contents",
+                    "    cd <path>         Change directory",
+                    "    pwd               Print working directory",
+                    "    mkdir [-p] <dir>  Create directory",
+                    "    touch <file>      Create empty file",
+                    "    cat <file>        Display file contents",
+                    "    rm [-r] <path>    Remove file or directory",
+                    "    cp <src> <dst>    Copy file or directory",
+                    "    mv <src> <dst>    Move/rename file or directory",
+                    "    find [path] name  Search for files by name",
+                    "",
+                    "  Text Processing:",
+                    "    echo <text>       Print text to stdout",
+                    "    grep <pat> [file] Search for patterns in text",
+                    "    wc [-l|-w|-c]     Count lines/words/chars",
+                    "    head [-n N]       Show first N lines",
+                    "    tail [-n N]       Show last N lines",
+                    "    sort [file]       Sort lines alphabetically",
+                    "    uniq              Remove duplicate lines",
+                    "",
+                    "  System:",
+                    "    whoami            Display current user",
+                    "    hostname          Display hostname",
+                    "    date              Display current date/time",
+                    "    uname             Display system info",
+                    "    history           Show command history",
+                    "    clear             Clear terminal screen",
+                    "    help              Show this help message",
+                    "",
+                    "  Operators:",
+                    "    cmd1 | cmd2       Pipe output to next command",
+                    "    cmd > file        Redirect output to file",
+                    "    cmd < file        Redirect file as input",
+                ].join("\n"),
+                stderr: String::new(),
+                exit_code: 0,
+            },
+            "clear" => CommandResult {
+                stdout: "\x1B[CLEAR]".to_string(), // Special token frontend will recognize
+                stderr: String::new(),
+                exit_code: 0,
+            },
             _ => CommandResult {
                 stdout: String::new(),
                 stderr: format!(
