@@ -9,6 +9,7 @@ import { initTaskbar } from "./taskbar";
 import { initStartMenu } from "./startMenu";
 import { mountTerminal } from "./apps/terminal";
 import { mountFileExplorer } from "./apps/fileExplorer";
+import { mountTaskManager } from "./apps/taskManager";
 
 let windowCounter = 0;
 
@@ -24,6 +25,7 @@ function createDesktopIcons(): void {
   const icons = [
     { id: "icon-terminal", label: "MiShell\nTerminal", emoji: "\uD83D\uDCBB", action: launchTerminal },
     { id: "icon-explorer", label: "File\nExplorer", emoji: "\uD83D\uDCC1", action: () => launchFileExplorer() },
+    { id: "icon-taskmanager", label: "Task\nManager", emoji: "\uD83D\uDCCA", action: launchTaskManager },
     { id: "icon-recycle", label: "Recycle\nBin", emoji: "\uD83D\uDDD1\uFE0F", action: () => {} },
   ];
 
@@ -53,6 +55,20 @@ export function launchTerminal(): void {
     appType: "terminal",
     onContent: (body) => {
       mountTerminal(body);
+    },
+  });
+}
+
+export function launchTaskManager(): void {
+  const id = `taskmanager-${++windowCounter}`;
+  createWindow({
+    id,
+    title: "Task Manager",
+    width: 500,
+    height: 420,
+    appType: "taskmanager",
+    onContent: (body) => {
+      mountTaskManager(body);
     },
   });
 }
