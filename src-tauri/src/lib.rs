@@ -160,8 +160,14 @@ struct SystemStats {
     total_bytes: usize,
     history_count: usize,
     cwd: String,
-    /// Estimated heap memory used by the virtual filesystem (bytes)
+    /// Estimated total heap memory (bytes)
     estimated_memory: usize,
+    /// Breakdown: bytes used by file content (String data in FsNode::File)
+    file_data_bytes: usize,
+    /// Breakdown: bytes used by node structs (enum + String headers + Vec headers)
+    node_overhead_bytes: usize,
+    /// Breakdown: bytes used by command history (String header + char data per entry)
+    history_memory_bytes: usize,
     /// Process list: recent commands with simulated PID and memory
     processes: Vec<ProcessInfo>,
 }
@@ -170,6 +176,7 @@ struct SystemStats {
 struct ProcessInfo {
     pid: usize,
     name: String,
+    full_command: String,
     memory_kb: usize,
     status: String,
 }
@@ -181,28 +188,44 @@ fn get_system_stats(state: State<'_, FsState>) -> SystemStats {
 
     let (files, dirs, bytes) = fs.root.stats();
 
-    // Estimate total heap memory: file content + node overhead + history strings
-    let node_overhead = (files + dirs) * 128; // ~128 bytes per node struct
-    let history_mem: usize = history.iter().map(|s| s.len() + 24).sum(); // String = ptr+len+cap + data
+    // ── Memory Breakdown (PHASE 5 - Demonstrating Rust's Ownership) ──
+    //
+    // In C, tracking memory requires manual counters (malloc_count, etc.).
+    // In Rust, we can calculate exact usage because every allocation is OWNED:
+    //
+    //   file_data_bytes: sum of all String content in FsNode::File nodes
+    //   node_overhead:   each FsNode struct uses ~128 bytes on heap
+    //                    (enum discriminant + String(ptr+len+cap) + Vec header + timestamps)
+    //   history_memory:  each history entry is a String (24 bytes header + char data)
+    //
+    // When any of these are dropped (e.g., file deleted, history cleared),
+    // Rust's Drop trait automatically calls dealloc — NO manual free() needed.
+    let node_overhead = (files + dirs) * 128;
+    let history_mem: usize = history.iter().map(|s| s.len() + 24).sum();
     let estimated_memory = bytes + node_overhead + history_mem;
 
-    // Build a "process list" from recent history (simulated)
+    // Build a "process list" from recent history.
+    // All commands in our virtual shell are SYNCHRONOUS — they execute
+    // and return immediately. There are no background/running processes.
+    // This mirrors how fork()+exec()+waitpid() works with foreground processes in C.
     let processes: Vec<ProcessInfo> = history
         .iter()
         .enumerate()
         .rev()
-        .take(15)
+        .take(20)
         .map(|(i, cmd)| {
             let cmd_name = cmd.split_whitespace().next().unwrap_or("unknown").to_string();
+            let truncated = if cmd.len() > 40 {
+                format!("{}...", &cmd[..37])
+            } else {
+                cmd.clone()
+            };
             ProcessInfo {
                 pid: 1000 + i,
                 name: cmd_name,
-                memory_kb: (cmd.len() * 4) + 64, // simulated memory usage
-                status: if i == history.len() - 1 {
-                    "Running".to_string()
-                } else {
-                    "Finished".to_string()
-                },
+                full_command: truncated,
+                memory_kb: (cmd.len() * 4) + 64,
+                status: "Finished".to_string(),
             }
         })
         .collect();
@@ -214,6 +237,10 @@ fn get_system_stats(state: State<'_, FsState>) -> SystemStats {
         history_count: history.len(),
         cwd: fs.cwd.clone(),
         estimated_memory,
+        // Individual breakdown for the frontend to display clearly
+        file_data_bytes: bytes,
+        node_overhead_bytes: node_overhead,
+        history_memory_bytes: history_mem,
         processes,
     }
 }

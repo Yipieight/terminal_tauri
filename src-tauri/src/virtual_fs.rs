@@ -1348,7 +1348,7 @@ impl VirtualFs {
             "ls", "dir", "cd", "pwd", "mkdir", "touch", "cat", "echo",
             "rm", "cp", "mv", "find", "grep", "wc", "head", "tail",
             "sort", "uniq", "history", "help", "clear", "whoami",
-            "hostname", "date", "uname",
+            "hostname", "date", "uname", "sim", "ps", "kill", "open",
         ]
     }
 
@@ -1761,6 +1761,13 @@ pub fn execute_pipeline(
                     "    clear             Clear terminal screen",
                     "    help              Show this help message",
                     "",
+                    "  Simulations:",
+                    "    sim [mode] [N]    Launch thread visualizer",
+                    "                      Modes: semaphore, mutex, monitor,",
+                    "                      critical, race, deadlock, concurrency",
+                    "    ps                List open simulation windows",
+                    "    kill <sim-id>     Close a simulation window",
+                    "",
                     "  Operators:",
                     "    cmd1 | cmd2       Pipe output to next command",
                     "    cmd > file        Redirect output to file",
@@ -1773,6 +1780,126 @@ pub fn execute_pipeline(
                 stdout: "\x1B[CLEAR]".to_string(), // Special token frontend will recognize
                 stderr: String::new(),
                 exit_code: 0,
+            },
+            // ── Thread Visualizer Commands ──
+            // These return special tokens that the frontend recognizes
+            // to launch the Thread Visualizer in a specific mode.
+            //
+            // Usage:
+            //   sim                     → show available modes
+            //   sim semaphore           → open semaphore with default 3 permits
+            //   sim semaphore 2         → open semaphore with 2 permits
+            //   sim mutex               → open mutex visualization
+            //   sim all                 → open all 7 modes
+            //
+            // If the window already exists, it updates the parameters
+            // without creating a new one (singleton per mode).
+            "sim" => {
+                if seg.args.is_empty() {
+                    CommandResult {
+                        stdout: [
+                            "Thread & Resource Visualizer - Simulaciones disponibles:",
+                            "",
+                            "  sim semaphore [N]   Semaforo contador (N permisos, default 3)",
+                            "  sim mutex           Exclusion mutua (1 hilo a la vez)",
+                            "  sim monitor         Monitor con variable de condicion",
+                            "  sim critical        Seccion critica (toggle proteccion)",
+                            "  sim race            Condicion de carrera (colision)",
+                            "  sim deadlock        Deadlock (bloqueo circular)",
+                            "  sim concurrency [N] Concurrencia independiente (N hilos, default 6)",
+                            "  sim all             Abrir todas las simulaciones",
+                            "",
+                            "  Si la ventana ya existe, se actualiza sin crear otra.",
+                            "  Usa 'ps' para ver ventanas abiertas, 'kill <id>' para cerrarlas.",
+                            "",
+                            "Controles dentro de la simulacion:",
+                            "  SPACE         Reiniciar simulacion",
+                            "  ENTER         Toggle proteccion (solo seccion critica)",
+                            "  UP/DOWN       Ajustar permisos (solo semaforo)",
+                        ].join("\n"),
+                        stderr: String::new(),
+                        exit_code: 0,
+                    }
+                } else {
+                    let mode = seg.args[0].as_str();
+                    let valid_modes = ["semaphore", "mutex", "monitor", "critical", "race", "deadlock", "concurrency", "all"];
+                    if valid_modes.contains(&mode) {
+                        // Parse optional numeric parameter
+                        let param = if seg.args.len() > 1 {
+                            seg.args[1].parse::<u32>().unwrap_or(3)
+                        } else {
+                            3
+                        };
+                        CommandResult {
+                            stdout: format!("\x1B[SIM:{}:{}]", mode, param),
+                            stderr: String::new(),
+                            exit_code: 0,
+                        }
+                    } else {
+                        CommandResult {
+                            stdout: String::new(),
+                            stderr: format!("sim: modo desconocido '{}'. Escribe 'sim' para ver los modos.", mode),
+                            exit_code: 1,
+                        }
+                    }
+                }
+            },
+            // ── Process management commands ──
+            // ps: lists ALL open windows (the frontend handles this via windowManager)
+            // kill: closes any window by ID
+            // open: launches an app by name
+            "ps" => CommandResult {
+                stdout: "\x1B[PS]".to_string(),
+                stderr: String::new(),
+                exit_code: 0,
+            },
+            "kill" => {
+                if seg.args.is_empty() {
+                    CommandResult {
+                        stdout: String::new(),
+                        stderr: "kill: usage: kill <window-id>\nUsa 'ps' para ver las ventanas abiertas.".to_string(),
+                        exit_code: 1,
+                    }
+                } else {
+                    CommandResult {
+                        stdout: format!("\x1B[KILL:{}]", seg.args[0]),
+                        stderr: String::new(),
+                        exit_code: 0,
+                    }
+                }
+            },
+            "open" => {
+                if seg.args.is_empty() {
+                    CommandResult {
+                        stdout: [
+                            "Aplicaciones disponibles:",
+                            "",
+                            "  open terminal        Abrir MiShell Terminal",
+                            "  open explorer        Abrir File Explorer",
+                            "  open taskmanager     Abrir Task Manager",
+                            "  open calculator      Abrir Calculator",
+                            "  open sim <modo> [N]  Abrir simulacion (ver 'sim' para modos)",
+                        ].join("\n"),
+                        stderr: String::new(),
+                        exit_code: 0,
+                    }
+                } else {
+                    let app = seg.args[0].as_str();
+                    let valid_apps = ["terminal", "explorer", "taskmanager", "calculator"];
+                    if valid_apps.contains(&app) {
+                        CommandResult {
+                            stdout: format!("\x1B[OPEN:{}]", app),
+                            stderr: String::new(),
+                            exit_code: 0,
+                        }
+                    } else {
+                        CommandResult {
+                            stdout: String::new(),
+                            stderr: format!("open: aplicacion '{}' no encontrada. Escribe 'open' para ver las disponibles.", app),
+                            exit_code: 1,
+                        }
+                    }
+                }
             },
             _ => CommandResult {
                 stdout: String::new(),

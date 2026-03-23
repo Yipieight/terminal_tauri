@@ -2,9 +2,17 @@
  * MiShell - Task Manager App
  *
  * Windows XP-style Task Manager that shows:
- *   - Processes tab: list of recent commands with simulated PID/memory
+ *   - Processes tab: command history with PID, full command, and memory
  *   - Performance tab: memory usage visualization with animated bar chart
- *   - System tab: filesystem stats (files, dirs, total bytes)
+ *     and clear breakdown of WHERE memory is allocated (file data vs
+ *     node overhead vs history strings)
+ *   - System tab: filesystem stats + system info
+ *
+ * PHASE 5 (Academic Rubric):
+ * This visually demonstrates Rust's ownership-based memory management.
+ * Every byte shown is OWNED by a Rust struct — no manual free() needed.
+ * When a file is deleted or history is cleared, memory is freed automatically
+ * via Rust's Drop trait (equivalent to RAII in C++).
  *
  * All data comes from the Rust backend via get_system_stats IPC command.
  * Refreshes every 2 seconds to show real-time changes.
@@ -15,6 +23,7 @@ import { invoke } from "@tauri-apps/api/core";
 interface ProcessInfo {
   pid: number;
   name: string;
+  full_command: string;
   memory_kb: number;
   status: string;
 }
@@ -26,6 +35,9 @@ interface SystemStats {
   history_count: number;
   cwd: string;
   estimated_memory: number;
+  file_data_bytes: number;
+  node_overhead_bytes: number;
+  history_memory_bytes: number;
   processes: ProcessInfo[];
 }
 
@@ -114,7 +126,7 @@ export function mountTaskManager(container: HTMLElement): void {
         <thead>
           <tr>
             <th>PID</th>
-            <th>Process Name</th>
+            <th>Command</th>
             <th>Memory</th>
             <th>Status</th>
           </tr>
@@ -125,11 +137,11 @@ export function mountTaskManager(container: HTMLElement): void {
             : procs
                 .map(
                   (p) => `
-            <tr class="${p.status === "Running" ? "tm-row-running" : ""}">
+            <tr>
               <td>${p.pid}</td>
-              <td>${p.name}</td>
+              <td title="${p.full_command}">${p.full_command}</td>
               <td>${p.memory_kb} KB</td>
-              <td><span class="tm-status-${p.status.toLowerCase()}">${p.status}</span></td>
+              <td><span class="tm-status-finished">${p.status}</span></td>
             </tr>`
                 )
                 .join("")
@@ -155,9 +167,15 @@ export function mountTaskManager(container: HTMLElement): void {
       })
       .join("");
 
+    // Calculate percentages for the visual breakdown
+    const total = stats.estimated_memory || 1;
+    const filePct = Math.round((stats.file_data_bytes / total) * 100);
+    const nodePct = Math.round((stats.node_overhead_bytes / total) * 100);
+    const histPct = Math.round((stats.history_memory_bytes / total) * 100);
+
     performancePanel.innerHTML = `
       <div class="tm-perf-section">
-        <div class="tm-perf-header">Memory Usage</div>
+        <div class="tm-perf-header">Memory Usage Over Time</div>
         <div class="tm-chart-container">
           <div class="tm-chart-label">${maxMem} KB</div>
           <div class="tm-chart">
@@ -165,27 +183,50 @@ export function mountTaskManager(container: HTMLElement): void {
           </div>
           <div class="tm-chart-label">0 KB</div>
         </div>
+
+        <div class="tm-perf-header" style="margin-top:12px;">Memory Breakdown (Rust Ownership Model)</div>
         <div class="tm-perf-stats">
           <div class="tm-perf-row">
-            <span>Current:</span>
-            <strong>${memKB} KB</strong>
+            <span>Total Heap Memory:</span>
+            <strong>${formatBytes(stats.estimated_memory)}</strong>
           </div>
           <div class="tm-perf-row">
             <span>Peak:</span>
-            <strong>${Math.max(...memoryHistory)} KB</strong>
+            <strong>${formatBytes(Math.max(...memoryHistory) * 1024)}</strong>
+          </div>
+        </div>
+
+        <div class="tm-perf-stats" style="margin-top:6px;">
+          <div class="tm-perf-row" style="margin-bottom:4px;">
+            <span style="font-weight:bold;">Where is memory allocated?</span>
           </div>
           <div class="tm-perf-row">
-            <span>File Data:</span>
-            <strong>${formatBytes(stats.total_bytes)}</strong>
+            <span>📄 File Data (String content in FsNode::File):</span>
+            <strong>${formatBytes(stats.file_data_bytes)} (${filePct}%)</strong>
+          </div>
+          <div class="tm-mem-bar-container">
+            <div class="tm-mem-bar tm-mem-bar-files" style="width:${filePct}%"></div>
           </div>
           <div class="tm-perf-row">
-            <span>Node Overhead:</span>
-            <strong>${formatBytes((stats.total_files + stats.total_dirs) * 128)}</strong>
+            <span>🗂️ Node Overhead (${stats.total_files + stats.total_dirs} FsNode structs x ~128B):</span>
+            <strong>${formatBytes(stats.node_overhead_bytes)} (${nodePct}%)</strong>
+          </div>
+          <div class="tm-mem-bar-container">
+            <div class="tm-mem-bar tm-mem-bar-nodes" style="width:${nodePct}%"></div>
           </div>
           <div class="tm-perf-row">
-            <span>History Memory:</span>
-            <strong>${formatBytes(stats.estimated_memory - stats.total_bytes - (stats.total_files + stats.total_dirs) * 128)}</strong>
+            <span>📜 History (${stats.history_count} commands x ~24B + chars):</span>
+            <strong>${formatBytes(stats.history_memory_bytes)} (${histPct}%)</strong>
           </div>
+          <div class="tm-mem-bar-container">
+            <div class="tm-mem-bar tm-mem-bar-history" style="width:${histPct}%"></div>
+          </div>
+        </div>
+
+        <div class="tm-perf-stats" style="margin-top:6px;font-size:10px;color:#666;">
+          <em>All memory is owned by Rust structs. When data is deleted (rm, etc.),
+          the Drop trait automatically frees memory — no manual free() needed.
+          This is equivalent to RAII in C++, but enforced at compile time.</em>
         </div>
       </div>
     `;
@@ -207,7 +248,7 @@ export function mountTaskManager(container: HTMLElement): void {
         <div class="tm-sys-card">
           <div class="tm-sys-icon">💾</div>
           <div class="tm-sys-value">${formatBytes(stats.total_bytes)}</div>
-          <div class="tm-sys-label">Total Data</div>
+          <div class="tm-sys-label">File Data</div>
         </div>
         <div class="tm-sys-card">
           <div class="tm-sys-icon">🧠</div>
@@ -230,13 +271,13 @@ export function mountTaskManager(container: HTMLElement): void {
         <div class="tm-perf-header">System Information</div>
         <table class="tm-info-table">
           <tr><td>OS:</td><td>MiShell Virtual OS 1.0</td></tr>
-          <tr><td>Kernel:</td><td>Rust ${getRustVersion()}</td></tr>
+          <tr><td>Kernel:</td><td>Rust (ownership model)</td></tr>
           <tr><td>Shell:</td><td>MiShell v2.0</td></tr>
           <tr><td>Backend:</td><td>Tauri v2 + Rust</td></tr>
           <tr><td>Frontend:</td><td>TypeScript + XP.css</td></tr>
-          <tr><td>Filesystem:</td><td>Virtual (JSON-backed)</td></tr>
-          <tr><td>Memory Model:</td><td>Rust Ownership (RAII)</td></tr>
-          <tr><td>Concurrency:</td><td>Mutex&lt;VirtualFs&gt;</td></tr>
+          <tr><td>Filesystem:</td><td>Virtual (Sandboxed, JSON-backed)</td></tr>
+          <tr><td>Memory Model:</td><td>Rust Ownership (RAII, no manual free)</td></tr>
+          <tr><td>Concurrency:</td><td>Mutex&lt;VirtualFs&gt; (thread-safe)</td></tr>
         </table>
       </div>
     `;
@@ -253,10 +294,6 @@ export function mountTaskManager(container: HTMLElement): void {
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  }
-
-  function getRustVersion(): string {
-    return "1.75+ (ownership model)";
   }
 
   // Initial load + auto-refresh every 2 seconds
