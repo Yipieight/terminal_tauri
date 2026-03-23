@@ -108,9 +108,73 @@ ${"─".repeat(50)}`;
         input: trimmed,
       });
 
-      // Handle special clear signal from backend
+      // Handle special signals from backend
       if (result.stdout === "\x1B[CLEAR]") {
         output.innerHTML = "";
+      } else if (result.stdout.startsWith("\x1B[SIM:")) {
+        // Launch simulation: \x1B[SIM:mode:param]
+        const match = result.stdout.match(/\x1B\[SIM:(\w+):(\d+)\]/);
+        if (match) {
+          const mode = match[1];
+          const param = parseInt(match[2]);
+          try {
+            const { launchSimulation } = await import("../desktop");
+            launchSimulation(mode as any, param);
+            appendText(`Simulacion '${mode}' abierta (param=${param})`, "system-msg");
+          } catch {
+            appendText("Error al abrir simulacion", "stderr");
+          }
+        }
+      } else if (result.stdout === "\x1B[PS]") {
+        // List ALL open windows
+        const { getWindows } = await import("../windowManager");
+        const wins = getWindows();
+        if (wins.size === 0) {
+          appendText("No hay ventanas abiertas.", "stdout");
+        } else {
+          const lines = ["  ID                    TITLE                   TYPE"];
+          const divider = "  " + "-".repeat(62);
+          lines.push(divider);
+          for (const [id, win] of wins) {
+            const title = win.title.padEnd(24);
+            const type = (win.appType || "unknown").padEnd(16);
+            lines.push(`  ${id.padEnd(22)}${title}${type}`);
+          }
+          appendText(lines.join("\n"), "stdout");
+        }
+      } else if (result.stdout.startsWith("\x1B[KILL:")) {
+        const target = result.stdout.replace("\x1B[KILL:", "").replace("]", "");
+        const { getWindows, closeWindow } = await import("../windowManager");
+        const wins = getWindows();
+        const win = wins.get(target);
+        if (win) {
+          closeWindow(target);
+          appendText(`Ventana '${target}' cerrada.`, "system-msg");
+        } else {
+          appendText(`kill: no se encontro '${target}'. Usa 'ps' para ver las ventanas abiertas.`, "stderr");
+        }
+      } else if (result.stdout.startsWith("\x1B[OPEN:")) {
+        const app = result.stdout.replace("\x1B[OPEN:", "").replace("]", "");
+        try {
+          const desktop = await import("../desktop");
+          switch (app) {
+            case "terminal":
+              desktop.launchTerminal();
+              break;
+            case "explorer":
+              desktop.launchFileExplorer();
+              break;
+            case "taskmanager":
+              desktop.launchTaskManager();
+              break;
+            case "calculator":
+              desktop.launchCalculator();
+              break;
+          }
+          appendText(`Aplicacion '${app}' abierta.`, "system-msg");
+        } catch {
+          appendText(`Error al abrir '${app}'.`, "stderr");
+        }
       } else {
         if (result.stdout) {
           appendText(result.stdout, "stdout");

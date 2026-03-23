@@ -4,12 +4,14 @@
  * Windows XP-style desktop with wallpaper, icons, and app launching.
  */
 
-import { createWindow } from "./windowManager";
+import { createWindow, getWindows, bringToFront, restoreWindow } from "./windowManager";
 import { initTaskbar } from "./taskbar";
 import { initStartMenu } from "./startMenu";
 import { mountTerminal } from "./apps/terminal";
 import { mountFileExplorer } from "./apps/fileExplorer";
 import { mountTaskManager } from "./apps/taskManager";
+import { mountSingleMode, getActiveSimulations, MODE_NAMES, type SimMode, SIM_MODES } from "./apps/threadVisualizer";
+import { mountCalculator } from "./apps/calculator";
 
 let windowCounter = 0;
 
@@ -26,6 +28,8 @@ function createDesktopIcons(): void {
     { id: "icon-terminal", label: "MiShell\nTerminal", emoji: "\uD83D\uDCBB", action: launchTerminal },
     { id: "icon-explorer", label: "File\nExplorer", emoji: "\uD83D\uDCC1", action: () => launchFileExplorer() },
     { id: "icon-taskmanager", label: "Task\nManager", emoji: "\uD83D\uDCCA", action: launchTaskManager },
+    { id: "icon-calc", label: "Calculator", emoji: "\uD83E\uDDEE", action: launchCalculator },
+    { id: "icon-threads", label: "Thread\nVisualizer", emoji: "\uD83C\uDFAC", action: launchThreadVisualizer },
     { id: "icon-recycle", label: "Recycle\nBin", emoji: "\uD83D\uDDD1\uFE0F", action: () => {} },
   ];
 
@@ -71,6 +75,72 @@ export function launchTaskManager(): void {
       mountTaskManager(body);
     },
   });
+}
+
+/**
+ * Launch a thread visualizer for a specific mode.
+ * If a window for that mode already exists, update its parameters instead.
+ * If mode is "all", opens all 7 modes in sequence.
+ */
+export function launchSimulation(mode: SimMode | "all" = "semaphore", param: number = 3): void {
+  if (mode === "all") {
+    for (const m of SIM_MODES) {
+      launchSimulation(m, param);
+    }
+    return;
+  }
+
+  const instanceId = `sim-${mode}`;
+  const existing = getActiveSimulations().get(instanceId);
+
+  if (existing) {
+    // Update existing window's parameters
+    existing.updateParam(param);
+    // Focus the existing window properly
+    const win = getWindows().get(instanceId);
+    if (win) {
+      if (win.isMinimized) {
+        restoreWindow(instanceId);
+      } else {
+        bringToFront(instanceId);
+      }
+    }
+    return;
+  }
+
+  createWindow({
+    id: instanceId,
+    title: `Sim: ${MODE_NAMES[mode]}`,
+    width: 720,
+    height: 420,
+    appType: `sim-${mode}`,
+    onContent: (body) => {
+      mountSingleMode(body, mode, param, instanceId);
+    },
+    onClose: () => {
+      const inst = getActiveSimulations().get(instanceId);
+      if (inst) inst.destroy();
+    },
+  });
+}
+
+export function launchCalculator(): void {
+  const id = `calculator-${++windowCounter}`;
+  createWindow({
+    id,
+    title: "Calculator",
+    width: 260,
+    height: 340,
+    appType: "calculator",
+    onContent: (body) => {
+      mountCalculator(body);
+    },
+  });
+}
+
+// Keep backward compatibility
+export function launchThreadVisualizer(): void {
+  launchSimulation("semaphore", 3);
 }
 
 export function launchFileExplorer(initialPath?: string): void {
