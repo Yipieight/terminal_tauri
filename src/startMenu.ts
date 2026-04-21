@@ -4,7 +4,7 @@
  * Windows XP-style Start menu with application launcher.
  */
 
-import { launchTerminal, launchFileExplorer, launchTaskManager, launchThreadVisualizer, launchCalculator } from "./desktop";
+import { launchTerminal, launchFileExplorer, launchTaskManager, launchThreadVisualizer, launchCalculator, launchScheduler } from "./desktop";
 import { showShutdown } from "./bootSequence";
 
 export function initStartMenu(): void {
@@ -35,6 +35,10 @@ export function initStartMenu(): void {
         <button class="start-menu-item" id="sm-calculator">
           <span class="start-menu-icon">&#129518;</span>
           <span>Calculator</span>
+        </button>
+        <button class="start-menu-item" id="sm-scheduler">
+          <span class="start-menu-icon">&#9201;</span>
+          <span>CPU Scheduler</span>
         </button>
       </div>
       <div class="start-menu-divider"></div>
@@ -78,6 +82,11 @@ export function initStartMenu(): void {
 
   document.getElementById("sm-calculator")!.addEventListener("click", () => {
     launchCalculator();
+    hideStartMenu();
+  });
+
+  document.getElementById("sm-scheduler")!.addEventListener("click", () => {
+    launchScheduler("fifo", 2);
     hideStartMenu();
   });
 

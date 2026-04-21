@@ -1348,7 +1348,7 @@ impl VirtualFs {
             "ls", "dir", "cd", "pwd", "mkdir", "touch", "cat", "echo",
             "rm", "cp", "mv", "find", "grep", "wc", "head", "tail",
             "sort", "uniq", "history", "help", "clear", "whoami",
-            "hostname", "date", "uname", "sim", "ps", "kill", "open",
+            "hostname", "date", "uname", "sim", "sched", "ps", "kill", "open",
         ]
     }
 
@@ -1762,11 +1762,15 @@ pub fn execute_pipeline(
                     "    help              Show this help message",
                     "",
                     "  Simulations:",
-                    "    sim [mode] [N]    Launch thread visualizer",
-                    "                      Modes: semaphore, mutex, monitor,",
-                    "                      critical, race, deadlock, concurrency",
-                    "    ps                List open simulation windows",
-                    "    kill <sim-id>     Close a simulation window",
+                    "    sim [mode] [N]       Launch thread synchronization visualizer",
+                    "                          Modes: semaphore, mutex, monitor,",
+                    "                          critical, race, deadlock, concurrency",
+                    "    sched [algo] [Q]     Launch CPU scheduler visualizer",
+                    "                          Algos: fifo, sjf, rr, priority",
+                    "                          Q = quantum (Round Robin only)",
+                    "    ps                   List all open windows",
+                    "    kill <window-id>     Close a window",
+                    "    open <app>           Open an application",
                     "",
                     "  Operators:",
                     "    cmd1 | cmd2       Pipe output to next command",
@@ -1839,6 +1843,66 @@ pub fn execute_pipeline(
                         CommandResult {
                             stdout: String::new(),
                             stderr: format!("sim: modo desconocido '{}'. Escribe 'sim' para ver los modos.", mode),
+                            exit_code: 1,
+                        }
+                    }
+                }
+            },
+            // ── CPU Scheduler Visualizer ──
+            // sched: opens a CPU scheduling animation.
+            //   Frontend handles via \x1B[SCHED:algo:quantum] sentinel.
+            //
+            // Usage:
+            //   sched              → show available algorithms
+            //   sched fifo         → FIFO / First Come First Served
+            //   sched sjf          → Shortest Job First (non-preemptive)
+            //   sched rr [Q]       → Round Robin (Q = quantum, default 2)
+            //   sched priority     → Priority Scheduling
+            "sched" => {
+                if seg.args.is_empty() {
+                    CommandResult {
+                        stdout: [
+                            "CPU Scheduler Visualizer — Algoritmos de planificacion:",
+                            "",
+                            "  sched fifo          FIFO / First Come, First Served",
+                            "                        Procesos en orden de llegada",
+                            "  sched sjf           Shortest Job First (no expropiativo)",
+                            "                        Minimo tiempo promedio de espera",
+                            "  sched rr [Q]        Round Robin (quantum Q, defecto 2)",
+                            "                        Equitativo entre todos los procesos",
+                            "  sched priority      Priority Scheduling (no expropiativo)",
+                            "                        Menor numero = mayor prioridad",
+                            "",
+                            "  Usa 'ps' para ver ventanas abiertas, 'kill <id>' para cerrar.",
+                            "",
+                            "  Controles dentro del visualizador:",
+                            "    SPACE       Reiniciar simulacion",
+                            "    +  /  -     Acelerar / ralentizar animacion",
+                        ].join("\n"),
+                        stderr: String::new(),
+                        exit_code: 0,
+                    }
+                } else {
+                    let algo = seg.args[0].as_str();
+                    let valid_algos = ["fifo", "sjf", "rr", "priority"];
+                    if valid_algos.contains(&algo) {
+                        let quantum = if seg.args.len() > 1 {
+                            seg.args[1].parse::<u32>().unwrap_or(2)
+                        } else {
+                            2
+                        };
+                        CommandResult {
+                            stdout: format!("\x1B[SCHED:{}:{}]", algo, quantum),
+                            stderr: String::new(),
+                            exit_code: 0,
+                        }
+                    } else {
+                        CommandResult {
+                            stdout: String::new(),
+                            stderr: format!(
+                                "sched: algoritmo '{}' desconocido.\nAlgoritmos disponibles: fifo, sjf, rr, priority\nEscribe 'sched' para mas informacion.",
+                                algo
+                            ),
                             exit_code: 1,
                         }
                     }

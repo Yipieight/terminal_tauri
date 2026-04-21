@@ -12,6 +12,7 @@ import { mountFileExplorer } from "./apps/fileExplorer";
 import { mountTaskManager } from "./apps/taskManager";
 import { mountSingleMode, getActiveSimulations, MODE_NAMES, type SimMode, SIM_MODES } from "./apps/threadVisualizer";
 import { mountCalculator } from "./apps/calculator";
+import { mountScheduler, SCHED_ALGO_NAMES, type SchedAlgo } from "./apps/scheduler";
 
 let windowCounter = 0;
 
@@ -30,6 +31,7 @@ function createDesktopIcons(): void {
     { id: "icon-taskmanager", label: "Task\nManager", emoji: "\uD83D\uDCCA", action: launchTaskManager },
     { id: "icon-calc", label: "Calculator", emoji: "\uD83E\uDDEE", action: launchCalculator },
     { id: "icon-threads", label: "Thread\nVisualizer", emoji: "\uD83C\uDFAC", action: launchThreadVisualizer },
+    { id: "icon-scheduler", label: "CPU\nScheduler", emoji: "\u23F1\uFE0F", action: () => launchScheduler("fifo", 2) },
     { id: "icon-recycle", label: "Recycle\nBin", emoji: "\uD83D\uDDD1\uFE0F", action: () => {} },
   ];
 
@@ -141,6 +143,33 @@ export function launchCalculator(): void {
 // Keep backward compatibility
 export function launchThreadVisualizer(): void {
   launchSimulation("semaphore", 3);
+}
+
+/**
+ * Launch a CPU Scheduler visualizer.
+ * If a window for that algorithm already exists, bring it to front.
+ */
+export function launchScheduler(algo: SchedAlgo = "fifo", quantum: number = 2): void {
+  const instanceId = `sched-${algo}`;
+  const existing = getWindows().get(instanceId);
+  if (existing) {
+    if (existing.isMinimized) {
+      restoreWindow(instanceId);
+    } else {
+      bringToFront(instanceId);
+    }
+    return;
+  }
+  createWindow({
+    id: instanceId,
+    title: `Sched: ${SCHED_ALGO_NAMES[algo]}`,
+    width: 780,
+    height: 460,
+    appType: `sched-${algo}`,
+    onContent: (body) => {
+      mountScheduler(body, algo, quantum, instanceId);
+    },
+  });
 }
 
 export function launchFileExplorer(initialPath?: string): void {

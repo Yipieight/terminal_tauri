@@ -125,6 +125,20 @@ ${"─".repeat(50)}`;
             appendText("Error al abrir simulacion", "stderr");
           }
         }
+      } else if (result.stdout.startsWith("\x1B[SCHED:")) {
+        // Launch CPU scheduler: \x1B[SCHED:algo:quantum]
+        const match = result.stdout.match(/\x1B\[SCHED:(\w+):(\d+)\]/);
+        if (match) {
+          const algo = match[1];
+          const quantum = parseInt(match[2]);
+          try {
+            const { launchScheduler } = await import("../desktop");
+            launchScheduler(algo as any, quantum);
+            appendText(`CPU Scheduler '${algo.toUpperCase()}' abierto${algo === "rr" ? ` (Q=${quantum})` : ""}.`, "system-msg");
+          } catch {
+            appendText("Error al abrir CPU Scheduler", "stderr");
+          }
+        }
       } else if (result.stdout === "\x1B[PS]") {
         // List ALL open windows
         const { getWindows } = await import("../windowManager");
