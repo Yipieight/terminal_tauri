@@ -165,11 +165,15 @@ export function mountScheduler(
   container.style.flexDirection = "row";
   container.style.background = "#1a1a2e";
   container.style.overflow = "hidden";
+  container.style.height = "100%";
 
-  // ── Canvas wrap ──
+  // ── Canvas wrap — reuses .tv-canvas-wrap / .tv-canvas CSS so that
+  //    the canvas fills 100% of its parent and the ResizeObserver fires
+  //    whenever the window is resized by the user. ──
   const canvasWrap = document.createElement("div");
-  canvasWrap.style.cssText = "flex:1;position:relative;overflow:hidden;min-width:0;";
+  canvasWrap.className = "tv-canvas-wrap";
   const canvas = document.createElement("canvas");
+  canvas.className = "tv-canvas";
   canvasWrap.appendChild(canvas);
 
   // ── Info panel (reuses thread-visualizer styles) ──
