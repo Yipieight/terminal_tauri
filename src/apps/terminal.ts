@@ -347,10 +347,16 @@ ${"─".repeat(50)}`;
     const sessionLog = getSessionLog();
     const cmdCount   = sessionLog.filter((e) => e.type === "command").length;
     const simModes   = [...new Set(
-      sessionLog.filter((e) => e.type === "simulation").map((e) => e.data["mode"] as string)
+      sessionLog
+        .filter((e) => e.type === "simulation")
+        .map((e) => e.data["mode"] as string | undefined)
+        .filter((m): m is string => Boolean(m))
     )];
     const schedAlgos = [...new Set(
-      sessionLog.filter((e) => e.type === "schedule").map((e) => e.data["algo"] as string)
+      sessionLog
+        .filter((e) => e.type === "schedule")
+        .map((e) => e.data["algo"] as string | undefined)
+        .filter((a): a is string => Boolean(a))
     )];
 
     appendText(
@@ -379,6 +385,12 @@ ${"─".repeat(50)}`;
           output.scrollTop = output.scrollHeight;
         },
         async () => {
+          // Guard: don't write an empty file
+          if (!fullReport.trim()) {
+            appendText("⚠️  El modelo no generó contenido. Intenta de nuevo.", "stderr");
+            resolve();
+            return;
+          }
           // Save to virtual filesystem
           try {
             await invoke("fs_write_file", { path: filePath, content: fullReport });
@@ -390,8 +402,9 @@ ${"─".repeat(50)}`;
             logSessionEvent({ type: "command", data: { input: "ai report", output: filePath } });
           } catch (err) {
             appendText(`⚠️  No se pudo guardar: ${err}`, "stderr");
+          } finally {
+            resolve();
           }
-          resolve();
         },
         (err) => {
           reportEl.className = "stderr ai-response";
