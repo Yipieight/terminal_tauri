@@ -75,6 +75,10 @@ ${"─".repeat(50)}`;
   let tabCompletions: string[] = [];
   let tabIndex = -1;
 
+  // ── NLP state ──
+  let pendingNLPCommand  = "";   // the generated shell command
+  let pendingNLPIsActive = false; // true while waiting for Y/N/E/A
+
   // ── Helpers ───────────────────────────────────────────────
   function appendText(text: string, className: string): void {
     const pre = document.createElement("pre");
@@ -117,6 +121,14 @@ ${"─".repeat(50)}`;
    * Streams tokens progressively into a <pre> element for a live-typing effect.
    */
   async function handleAI(userPrompt: string): Promise<void> {
+    if (userPrompt.startsWith("--nlp-auto ")) {
+      const { setNLPAutoMode } = await import("../ai/aiService");
+      const val = userPrompt.slice(11).trim();
+      if (val === "on")  { setNLPAutoMode(true);  appendText("✓ NLP auto-execute: ON",  "system-msg"); }
+      if (val === "off") { setNLPAutoMode(false); appendText("✓ NLP auto-execute: OFF", "system-msg"); }
+      return;
+    }
+
     // ── Config command ──────────────────────────────────────────────────
     if (userPrompt.startsWith("--config ")) {
       const newUrl = userPrompt.slice(9).trim().replace(/\/+$/, "");
@@ -268,11 +280,68 @@ ${"─".repeat(50)}`;
     }
   }
 
+  // ── NLP Shell ─────────────────────────────────────────────────────────
+
+  async function handleNLP(phrase: string): Promise<void> {
+    appendText(`🤖 Interpretando: "${phrase}"`, "system-msg");
+
+    const { parseNLPCommand, isNLPAutoMode, logSessionEvent } =
+      await import("../ai/aiService");
+
+    const { command, explanation } = await parseNLPCommand(phrase);
+
+    if (!command) {
+      appendText(`⚠️  ${explanation}`, "stderr");
+      return;
+    }
+
+    // Check if destructive
+    const isDestructive = /\brm\b|\brmdir\b|-rf/.test(command);
+
+    if (isNLPAutoMode() && !isDestructive) {
+      // Auto-execute without confirmation
+      appendText(`⚡ Auto: ${command}`, "nlp-suggestion");
+      await executeCommand(command);
+      logSessionEvent({ type: "command", data: { input: `?? ${phrase}`, generated: command } });
+      return;
+    }
+
+    // Show suggestion + confirmation prompt
+    const destructiveWarning = isDestructive
+      ? "\n⚠️  Comando destructivo — siempre requiere confirmación."
+      : "";
+    appendText(
+      `Comando sugerido: ${command}\n${explanation}${destructiveWarning}`,
+      "nlp-suggestion"
+    );
+    appendText(
+      "¿Ejecutar?  [Y] sí   [N] no   [E] editar" +
+      (isDestructive ? "" : "   [A] siempre ejecutar"),
+      "nlp-confirm"
+    );
+
+    pendingNLPCommand  = command;
+    pendingNLPIsActive = true;
+    input.focus();
+  }
+
   // ── Command executor ───────────────────────────────────────────────────
 
   async function executeCommand(rawInput: string): Promise<void> {
     const trimmed = rawInput.trim();
     if (!trimmed) return;
+
+    // ── NLP shell: ?? prefix ──────────────────────────────────────────────
+    if (trimmed.startsWith("?? ") || trimmed === "??") {
+      const phrase = trimmed.slice(3).trim();
+      appendText(`${prompt.textContent}${trimmed}`, "command-line");
+      if (!phrase) {
+        appendText('Uso: ?? <instrucción en español>\nEjemplo: ?? lista los archivos por tamaño', "system-msg");
+        return;
+      }
+      await handleNLP(phrase);
+      return;
+    }
 
     // Echo the command line
     appendText(`${prompt.textContent}${trimmed}`, "command-line");
@@ -378,6 +447,14 @@ ${"─".repeat(50)}`;
       appendText(`Error: ${error}`, "stderr");
     }
 
+    // Log for ai report session tracking
+    import("../ai/aiService").then(({ logSessionEvent }) => {
+      logSessionEvent({
+        type: "command",
+        data: { input: trimmed, exitCode: 0 },
+      });
+    }).catch(() => {/* ignore */});
+
     await updatePrompt();
   }
 
@@ -414,6 +491,38 @@ ${"─".repeat(50)}`;
 
   // ── Event handlers ────────────────────────────────────────
   input.addEventListener("keydown", async (e: KeyboardEvent) => {
+    // ── NLP confirmation handler ──────────────────────────────────────────
+    if (pendingNLPIsActive) {
+      const key = e.key.toUpperCase();
+      if (!["Y", "N", "E", "A", "ENTER"].includes(key)) return;
+      e.preventDefault();
+
+      const { setNLPAutoMode, logSessionEvent } = await import("../ai/aiService");
+      const cmd = pendingNLPCommand;
+      pendingNLPIsActive = false;
+      pendingNLPCommand  = "";
+
+      if (key === "Y" || key === "ENTER") {
+        appendText(`$ ${cmd}`, "command-line");
+        await executeCommand(cmd);
+        logSessionEvent({ type: "command", data: { input: `?? (confirmed)`, generated: cmd } });
+      } else if (key === "A") {
+        setNLPAutoMode(true);
+        appendText("✓ Modo auto-execute activado. Usa 'ai --nlp-auto off' para desactivar.", "system-msg");
+        appendText(`$ ${cmd}`, "command-line");
+        await executeCommand(cmd);
+        logSessionEvent({ type: "command", data: { input: `?? (auto-on)`, generated: cmd } });
+      } else if (key === "E") {
+        input.value = cmd;
+        appendText("← Comando copiado al input para editar.", "system-msg");
+      } else {
+        // N
+        appendText("Cancelado.", "system-msg");
+      }
+      await updatePrompt();
+      return;
+    }
+
     if (e.key === "Tab") {
       e.preventDefault();
       await handleTab();
