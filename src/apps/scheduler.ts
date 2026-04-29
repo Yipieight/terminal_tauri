@@ -197,6 +197,7 @@ export function mountScheduler(
   let statsShown = false;
   let isAnalyzing  = false;
   let lastAnalysis = "";
+  let streamGen = 0;
   const Q = quantum > 0 ? quantum : 2;
 
   // ── State colors / labels ──
@@ -618,6 +619,7 @@ export function mountScheduler(
     if (aiBtn && !isAnalyzing) {
       aiBtn.addEventListener("click", async () => {
         if (isAnalyzing) return;
+        const gen = ++streamGen;
         isAnalyzing  = true;
         lastAnalysis = "";
         updateInfoPanel();
@@ -643,11 +645,13 @@ export function mountScheduler(
             ganttLength: gantt.length,
           },
           (token) => {
+            if (gen !== streamGen) return;
             lastAnalysis += token;
             const panel = infoPanel.querySelector(".ai-analysis-panel");
             if (panel) panel.textContent = lastAnalysis;
           },
           () => {
+            if (gen !== streamGen) return;
             isAnalyzing = false;
             updateInfoPanel();
             logSessionEvent({
@@ -656,6 +660,7 @@ export function mountScheduler(
             });
           },
           (err) => {
+            if (gen !== streamGen) return;
             lastAnalysis = `⚠️ ${err}`;
             isAnalyzing  = false;
             updateInfoPanel();

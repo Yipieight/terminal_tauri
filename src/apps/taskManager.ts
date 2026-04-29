@@ -110,14 +110,18 @@ export function mountTaskManager(container: HTMLElement): void {
   let isAnalyzingAI   = false;
   let lastAIDiagnosis = "";
   let lastStats: SystemStats | null = null;
+  let streamGen = 0;
 
   // Refresh data
   async function refresh(): Promise<void> {
     try {
       const stats: SystemStats = await invoke("get_system_stats");
       lastStats = stats;
+      const memKB = Math.round(stats.estimated_memory / 1024);
+      memoryHistory.push(memKB);
+      if (memoryHistory.length > MAX_HISTORY) memoryHistory.shift();
       renderProcesses(stats);
-      if (!isAnalyzingAI) renderPerformance(stats);
+      renderPerformance(stats);
       renderSystem(stats);
       renderStatus(stats);
     } catch (_err) {
@@ -158,9 +162,11 @@ export function mountTaskManager(container: HTMLElement): void {
   }
 
   function renderPerformance(stats: SystemStats): void {
-    const memKB = Math.round(stats.estimated_memory / 1024);
-    memoryHistory.push(memKB);
-    if (memoryHistory.length > MAX_HISTORY) memoryHistory.shift();
+    if (isAnalyzingAI && lastAIDiagnosis) {
+      const panel = performancePanel.querySelector("#tm-ai-panel");
+      if (panel) panel.textContent = lastAIDiagnosis;
+      return;
+    }
 
     const maxMem = Math.max(...memoryHistory, 1);
     const chartHeight = 120;
@@ -254,6 +260,7 @@ export function mountTaskManager(container: HTMLElement): void {
     if (aiBtn && !isAnalyzingAI) {
       aiBtn.addEventListener("click", async () => {
         if (!lastStats || isAnalyzingAI) return;
+        const gen = ++streamGen;
         isAnalyzingAI   = true;
         lastAIDiagnosis = "";
         renderPerformance(lastStats);
@@ -269,11 +276,13 @@ export function mountTaskManager(container: HTMLElement): void {
             recentCommands:     history.slice(-8),
           },
           (token) => {
+            if (gen !== streamGen) return;
             lastAIDiagnosis += token;
             const panel = performancePanel.querySelector("#tm-ai-panel");
             if (panel) panel.textContent = lastAIDiagnosis;
           },
           () => {
+            if (gen !== streamGen) return;
             isAnalyzingAI = false;
             if (lastStats) renderPerformance(lastStats);
             logSessionEvent({
@@ -286,6 +295,7 @@ export function mountTaskManager(container: HTMLElement): void {
             });
           },
           (err) => {
+            if (gen !== streamGen) return;
             lastAIDiagnosis = `⚠️ ${err}`;
             isAnalyzingAI   = false;
             if (lastStats) renderPerformance(lastStats);

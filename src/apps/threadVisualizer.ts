@@ -167,6 +167,7 @@ export function mountSingleMode(container: HTMLElement, mode: SimMode, param: nu
   let deadTimer = 0;
   let isAnalyzing  = false;
   let lastAnalysis = "";
+  let streamGen = 0;
 
   function resize(): void {
     const rect = canvasWrap.getBoundingClientRect();
@@ -558,6 +559,7 @@ export function mountSingleMode(container: HTMLElement, mode: SimMode, param: nu
     if (aiBtn && !isAnalyzing) {
       aiBtn.addEventListener("click", async () => {
         if (isAnalyzing) return;
+        const gen = ++streamGen;
         isAnalyzing  = true;
         lastAnalysis = "";
         updateInfo();
@@ -567,12 +569,22 @@ export function mountSingleMode(container: HTMLElement, mode: SimMode, param: nu
         analyzeThreadSim(
           { mode, param, description },
           (token) => {
+            if (gen !== streamGen) return;
             lastAnalysis += token;
             const panel = info.querySelector(".ai-analysis-panel");
             if (panel) panel.textContent = lastAnalysis;
           },
-          () => { isAnalyzing = false; updateInfo(); },
-          (err) => { lastAnalysis = `⚠️ ${err}`; isAnalyzing = false; updateInfo(); },
+          () => {
+            if (gen !== streamGen) return;
+            isAnalyzing = false;
+            updateInfo();
+          },
+          (err) => {
+            if (gen !== streamGen) return;
+            lastAnalysis = `⚠️ ${err}`;
+            isAnalyzing = false;
+            updateInfo();
+          },
         );
       });
     }
