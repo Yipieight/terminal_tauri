@@ -121,6 +121,16 @@ ${"─".repeat(50)}`;
    * Streams tokens progressively into a <pre> element for a live-typing effect.
    */
   async function handleAI(userPrompt: string): Promise<void> {
+    // ── Report generator ────────────────────────────────────────────────────
+    if (userPrompt === "report" || userPrompt.startsWith("report ")) {
+      const fileName = userPrompt.startsWith("report ")
+        ? userPrompt.slice(7).trim().replace(/\.md$/, "") + ".md"
+        : "report.md";
+      const filePath = `/home/user/${fileName}`;
+      await generateAIReport(filePath);
+      return;
+    }
+
     if (userPrompt.startsWith("--nlp-auto ")) {
       const { setNLPAutoMode } = await import("../ai/aiService");
       const val = userPrompt.slice(11).trim();
@@ -325,6 +335,73 @@ ${"─".repeat(50)}`;
     input.focus();
   }
 
+  // ── Report generator ───────────────────────────────────────────────────
+
+  async function generateAIReport(filePath: string): Promise<void> {
+    const {
+      generateReport,
+      getSessionLog,
+      logSessionEvent,
+    } = await import("../ai/aiService");
+
+    const sessionLog = getSessionLog();
+    const cmdCount   = sessionLog.filter((e) => e.type === "command").length;
+    const simModes   = [...new Set(
+      sessionLog.filter((e) => e.type === "simulation").map((e) => e.data["mode"] as string)
+    )];
+    const schedAlgos = [...new Set(
+      sessionLog.filter((e) => e.type === "schedule").map((e) => e.data["algo"] as string)
+    )];
+
+    appendText(
+      [
+        "📊 Recopilando datos de sesión...",
+        `   ✓ ${cmdCount} comandos ejecutados`,
+        `   ✓ Simulaciones: ${simModes.join(", ") || "ninguna"}`,
+        `   ✓ Algoritmos probados: ${schedAlgos.join(", ") || "ninguno"}`,
+        "🤖 Generando reporte con IA...",
+      ].join("\n"),
+      "system-msg"
+    );
+
+    const reportEl = document.createElement("pre");
+    reportEl.className = "stdout ai-response";
+    reportEl.textContent = "";
+    output.appendChild(reportEl);
+
+    let fullReport = "";
+
+    await new Promise<void>((resolve) => {
+      generateReport(
+        (token) => {
+          fullReport += token;
+          reportEl.textContent = fullReport;
+          output.scrollTop = output.scrollHeight;
+        },
+        async () => {
+          // Save to virtual filesystem
+          try {
+            await invoke("fs_write_file", { path: filePath, content: fullReport });
+            const shortName = filePath.split("/").pop()!;
+            appendText(
+              `✓ Reporte guardado en ${filePath}\n  Abre con: cat ${shortName}`,
+              "system-msg"
+            );
+            logSessionEvent({ type: "command", data: { input: "ai report", output: filePath } });
+          } catch (err) {
+            appendText(`⚠️  No se pudo guardar: ${err}`, "stderr");
+          }
+          resolve();
+        },
+        (err) => {
+          reportEl.className = "stderr ai-response";
+          reportEl.textContent = `⚠️  ${err}`;
+          resolve();
+        },
+      );
+    });
+  }
+
   // ── Command executor ───────────────────────────────────────────────────
 
   async function executeCommand(rawInput: string, _skipSessionLog = false): Promise<void> {
@@ -365,6 +442,9 @@ ${"─".repeat(50)}`;
             const { launchSimulation } = await import("../desktop");
             launchSimulation(mode as any, param);
             appendText(`Simulacion '${mode}' abierta (param=${param})`, "system-msg");
+            import("../ai/aiService").then(({ logSessionEvent }) => {
+              logSessionEvent({ type: "simulation", data: { mode, param } });
+            }).catch(() => {});
           } catch {
             appendText("Error al abrir simulacion", "stderr");
           }
