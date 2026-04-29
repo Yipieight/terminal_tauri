@@ -741,6 +741,16 @@ html, body {
   color: #55ff55;
 }
 
+/* AI assistant response — purple left border, slight purple tint */
+.ai-response {
+  color: #d8c8ff;
+  border-left: 3px solid #8855dd;
+  padding-left: 8px;
+  background: rgba(100, 50, 200, 0.06);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 /* Autocomplete suggestions */
 .terminal-autocomplete {
   display: none;

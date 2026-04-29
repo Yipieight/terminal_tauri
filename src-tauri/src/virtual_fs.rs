@@ -1348,7 +1348,7 @@ impl VirtualFs {
             "ls", "dir", "cd", "pwd", "mkdir", "touch", "cat", "echo",
             "rm", "cp", "mv", "find", "grep", "wc", "head", "tail",
             "sort", "uniq", "history", "help", "clear", "whoami",
-            "hostname", "date", "uname", "sim", "sched", "ps", "kill", "open",
+            "hostname", "date", "uname", "sim", "sched", "ai", "ps", "kill", "open",
         ]
     }
 
@@ -1768,6 +1768,7 @@ pub fn execute_pipeline(
                     "    sched [algo] [Q]     Launch CPU scheduler visualizer",
                     "                          Algos: fifo, sjf, rr, priority",
                     "                          Q = quantum (Round Robin only)",
+                    "    ai <question>        Ask the local AI (LM Studio/Ollama)",
                     "    ps                   List all open windows",
                     "    kill <window-id>     Close a window",
                     "    open <app>           Open an application",
@@ -1905,6 +1906,47 @@ pub fn execute_pipeline(
                             ),
                             exit_code: 1,
                         }
+                    }
+                }
+            },
+            // ── Local AI assistant ──
+            // Connects to LM Studio (OpenAI-compatible API at localhost:1234).
+            // The actual HTTP request is made by the frontend (TypeScript fetch),
+            // so this command just returns a sentinel \x1B[AI] that terminal.ts
+            // intercepts — keeping the command in history but delegating the
+            // streaming network call to the browser side.
+            "ai" => {
+                if seg.args.is_empty() {
+                    CommandResult {
+                        stdout: [
+                            "🤖 MiShell AI Assistant — conecta con LM Studio (local)",
+                            "",
+                            "  Uso: ai <pregunta>",
+                            "",
+                            "  Ejemplos:",
+                            "    ai analiza el uso de memoria del sistema",
+                            "    ai explica que es un deadlock",
+                            "    ai como funciona round robin con quantum 3",
+                            "    ai que ventajas tiene SJF sobre FIFO",
+                            "    ai explica la diferencia entre mutex y semaforo",
+                            "",
+                            "  Configuracion:",
+                            "    ai --config http://localhost:1234/v1   (LM Studio)",
+                            "    ai --config http://localhost:11434/v1  (Ollama)",
+                            "",
+                            "  Requiere LM Studio (o Ollama) corriendo con un modelo cargado.",
+                            "  Cualquier modelo funciona: Gemma, Llama, Mistral, Phi, etc.",
+                        ].join("\n"),
+                        stderr: String::new(),
+                        exit_code: 0,
+                    }
+                } else {
+                    // Pass all args joined; frontend will handle --config and prompts
+                    let joined = seg.args.join(" ");
+                    CommandResult {
+                        stdout: format!("\x1B[AI:{}]", joined),
+                        stderr: String::new(),
+                        exit_code: 0,
                     }
                 }
             },
