@@ -106,12 +106,18 @@ export function mountTaskManager(container: HTMLElement): void {
   const memoryHistory: number[] = [];
   const MAX_HISTORY = 30;
 
+  // AI analysis state
+  let isAnalyzingAI   = false;
+  let lastAIDiagnosis = "";
+  let lastStats: SystemStats | null = null;
+
   // Refresh data
   async function refresh(): Promise<void> {
     try {
       const stats: SystemStats = await invoke("get_system_stats");
+      lastStats = stats;
       renderProcesses(stats);
-      renderPerformance(stats);
+      if (!isAnalyzingAI) renderPerformance(stats);
       renderSystem(stats);
       renderStatus(stats);
     } catch (_err) {
@@ -228,8 +234,65 @@ export function mountTaskManager(container: HTMLElement): void {
           the Drop trait automatically frees memory — no manual free() needed.
           This is equivalent to RAII in C++, but enforced at compile time.</em>
         </div>
+
+        <div style="margin-top:12px;">
+          <button class="ai-analyze-btn" id="tm-ai-btn" ${isAnalyzingAI ? 'disabled' : ''}>
+            ${isAnalyzingAI ? '🤖 Analizando...' : '🤖 Analizar con IA'}
+          </button>
+          ${isAnalyzingAI || lastAIDiagnosis ? `<div class="ai-analysis-panel" id="tm-ai-panel"></div>` : ''}
+        </div>
       </div>
     `;
+
+    // Set panel text safely (no innerHTML with LLM content)
+    if (lastAIDiagnosis) {
+      const panel = performancePanel.querySelector("#tm-ai-panel");
+      if (panel) panel.textContent = lastAIDiagnosis;
+    }
+
+    const aiBtn = performancePanel.querySelector<HTMLButtonElement>("#tm-ai-btn");
+    if (aiBtn && !isAnalyzingAI) {
+      aiBtn.addEventListener("click", async () => {
+        if (!lastStats || isAnalyzingAI) return;
+        isAnalyzingAI   = true;
+        lastAIDiagnosis = "";
+        renderPerformance(lastStats);
+
+        const { analyzeTaskManager, logSessionEvent } = await import("../ai/aiService");
+        const history: string[] = await invoke("get_history");
+
+        analyzeTaskManager(
+          {
+            fileDataBytes:      lastStats.file_data_bytes,
+            nodeOverheadBytes:  lastStats.node_overhead_bytes,
+            historyMemoryBytes: lastStats.history_memory_bytes,
+            recentCommands:     history.slice(-8),
+          },
+          (token) => {
+            lastAIDiagnosis += token;
+            const panel = performancePanel.querySelector("#tm-ai-panel");
+            if (panel) panel.textContent = lastAIDiagnosis;
+          },
+          () => {
+            isAnalyzingAI = false;
+            if (lastStats) renderPerformance(lastStats);
+            logSessionEvent({
+              type: "memory",
+              data: {
+                fileDataBytes:      lastStats!.file_data_bytes,
+                nodeOverheadBytes:  lastStats!.node_overhead_bytes,
+                historyMemoryBytes: lastStats!.history_memory_bytes,
+              },
+            });
+          },
+          (err) => {
+            lastAIDiagnosis = `⚠️ ${err}`;
+            isAnalyzingAI   = false;
+            if (lastStats) renderPerformance(lastStats);
+          },
+        );
+      });
+    }
   }
 
   function renderSystem(stats: SystemStats): void {
