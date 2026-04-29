@@ -129,6 +129,72 @@ export function mountTaskManager(container: HTMLElement): void {
     }
   }
 
+  function attachAIButton(containerEl: HTMLElement, _stats: SystemStats): void {
+    if (lastAIDiagnosis) {
+      const panel = containerEl.querySelector("#tm-ai-panel");
+      if (panel) panel.textContent = lastAIDiagnosis;
+    }
+
+    const aiBtn = containerEl.querySelector<HTMLButtonElement>("#tm-ai-btn");
+    if (aiBtn && !isAnalyzingAI) {
+      aiBtn.addEventListener("click", async () => {
+        if (!lastStats || isAnalyzingAI) return;
+        const gen = ++streamGen;
+        isAnalyzingAI   = true;
+        lastAIDiagnosis = "";
+        renderPerformance(lastStats);
+        renderProcesses(lastStats);
+        renderSystem(lastStats);
+
+        const { analyzeTaskManager, logSessionEvent } = await import("../ai/aiService");
+        const history: string[] = await invoke("get_history");
+
+        analyzeTaskManager(
+          {
+            fileDataBytes:      lastStats.file_data_bytes,
+            nodeOverheadBytes:  lastStats.node_overhead_bytes,
+            historyMemoryBytes: lastStats.history_memory_bytes,
+            recentCommands:     history.slice(-8),
+          },
+          (token) => {
+            if (gen !== streamGen) return;
+            lastAIDiagnosis += token;
+            for (const panel of document.querySelectorAll("#tm-ai-panel")) {
+              panel.textContent = lastAIDiagnosis;
+            }
+          },
+          () => {
+            if (gen !== streamGen) return;
+            isAnalyzingAI = false;
+            if (lastStats) {
+              renderPerformance(lastStats);
+              renderProcesses(lastStats);
+              renderSystem(lastStats);
+            }
+            logSessionEvent({
+              type: "memory",
+              data: {
+                fileDataBytes:      lastStats!.file_data_bytes,
+                nodeOverheadBytes:  lastStats!.node_overhead_bytes,
+                historyMemoryBytes: lastStats!.history_memory_bytes,
+              },
+            });
+          },
+          (err) => {
+            if (gen !== streamGen) return;
+            lastAIDiagnosis = `⚠️ ${err}`;
+            isAnalyzingAI   = false;
+            if (lastStats) {
+              renderPerformance(lastStats);
+              renderProcesses(lastStats);
+              renderSystem(lastStats);
+            }
+          },
+        );
+      });
+    }
+  }
+
   function renderProcesses(stats: SystemStats): void {
     const procs = stats.processes;
     processesPanel.innerHTML = `
@@ -158,16 +224,18 @@ export function mountTaskManager(container: HTMLElement): void {
           }
         </tbody>
       </table>
+      <div style="margin-top:8px;padding:4px 0;">
+        <button id="tm-ai-btn" style="background:#d4d0c8;border:2px outset #fff;padding:3px 10px;font-size:11px;cursor:pointer;width:100%;margin-top:4px;" ${isAnalyzingAI ? 'disabled' : ''}>
+          ${isAnalyzingAI ? '🤖 Analizando...' : '🤖 Analizar con IA'}
+        </button>
+        ${isAnalyzingAI || lastAIDiagnosis ? '<div id="tm-ai-panel" style="margin-top:8px;padding:8px;background:#fffff0;border:1px solid #8855dd;border-radius:2px;color:#333;font-size:10px;line-height:1.6;white-space:pre-wrap;word-break:break-word;"></div>' : ''}
+      </div>
     `;
+
+    attachAIButton(processesPanel, stats);
   }
 
   function renderPerformance(stats: SystemStats): void {
-    if (isAnalyzingAI && lastAIDiagnosis) {
-      const panel = performancePanel.querySelector("#tm-ai-panel");
-      if (panel) panel.textContent = lastAIDiagnosis;
-      return;
-    }
-
     const maxMem = Math.max(...memoryHistory, 1);
     const chartHeight = 120;
 
@@ -242,67 +310,15 @@ export function mountTaskManager(container: HTMLElement): void {
         </div>
 
         <div style="margin-top:12px;">
-          <button class="ai-analyze-btn" id="tm-ai-btn" ${isAnalyzingAI ? 'disabled' : ''}>
+          <button id="tm-ai-btn" style="background:#d4d0c8;border:2px outset #fff;padding:3px 10px;font-size:11px;cursor:pointer;width:100%;margin-top:8px;" ${isAnalyzingAI ? 'disabled' : ''}>
             ${isAnalyzingAI ? '🤖 Analizando...' : '🤖 Analizar con IA'}
           </button>
-          ${isAnalyzingAI || lastAIDiagnosis ? `<div class="ai-analysis-panel" id="tm-ai-panel"></div>` : ''}
+          ${isAnalyzingAI || lastAIDiagnosis ? `<div id="tm-ai-panel" style="margin-top:8px;padding:8px;background:#fffff0;border:1px solid #8855dd;border-radius:2px;color:#333;font-size:10px;line-height:1.6;white-space:pre-wrap;word-break:break-word;"></div>` : ''}
         </div>
       </div>
     `;
 
-    // Set panel text safely (no innerHTML with LLM content)
-    if (lastAIDiagnosis) {
-      const panel = performancePanel.querySelector("#tm-ai-panel");
-      if (panel) panel.textContent = lastAIDiagnosis;
-    }
-
-    const aiBtn = performancePanel.querySelector<HTMLButtonElement>("#tm-ai-btn");
-    if (aiBtn && !isAnalyzingAI) {
-      aiBtn.addEventListener("click", async () => {
-        if (!lastStats || isAnalyzingAI) return;
-        const gen = ++streamGen;
-        isAnalyzingAI   = true;
-        lastAIDiagnosis = "";
-        renderPerformance(lastStats);
-
-        const { analyzeTaskManager, logSessionEvent } = await import("../ai/aiService");
-        const history: string[] = await invoke("get_history");
-
-        analyzeTaskManager(
-          {
-            fileDataBytes:      lastStats.file_data_bytes,
-            nodeOverheadBytes:  lastStats.node_overhead_bytes,
-            historyMemoryBytes: lastStats.history_memory_bytes,
-            recentCommands:     history.slice(-8),
-          },
-          (token) => {
-            if (gen !== streamGen) return;
-            lastAIDiagnosis += token;
-            const panel = performancePanel.querySelector("#tm-ai-panel");
-            if (panel) panel.textContent = lastAIDiagnosis;
-          },
-          () => {
-            if (gen !== streamGen) return;
-            isAnalyzingAI = false;
-            if (lastStats) renderPerformance(lastStats);
-            logSessionEvent({
-              type: "memory",
-              data: {
-                fileDataBytes:      lastStats!.file_data_bytes,
-                nodeOverheadBytes:  lastStats!.node_overhead_bytes,
-                historyMemoryBytes: lastStats!.history_memory_bytes,
-              },
-            });
-          },
-          (err) => {
-            if (gen !== streamGen) return;
-            lastAIDiagnosis = `⚠️ ${err}`;
-            isAnalyzingAI   = false;
-            if (lastStats) renderPerformance(lastStats);
-          },
-        );
-      });
-    }
+    attachAIButton(performancePanel, stats);
   }
 
   function renderSystem(stats: SystemStats): void {
@@ -353,7 +369,16 @@ export function mountTaskManager(container: HTMLElement): void {
           <tr><td>Concurrency:</td><td>Mutex&lt;VirtualFs&gt; (thread-safe)</td></tr>
         </table>
       </div>
+
+      <div style="margin-top:8px;padding:4px 0;">
+        <button id="tm-ai-btn" style="background:#d4d0c8;border:2px outset #fff;padding:3px 10px;font-size:11px;cursor:pointer;width:100%;margin-top:4px;" ${isAnalyzingAI ? 'disabled' : ''}>
+          ${isAnalyzingAI ? '🤖 Analizando...' : '🤖 Analizar con IA'}
+        </button>
+        ${isAnalyzingAI || lastAIDiagnosis ? '<div id="tm-ai-panel" style="margin-top:8px;padding:8px;background:#fffff0;border:1px solid #8855dd;border-radius:2px;color:#333;font-size:10px;line-height:1.6;white-space:pre-wrap;word-break:break-word;"></div>' : ''}
+      </div>
     `;
+
+    attachAIButton(systemPanel, stats);
   }
 
   function renderStatus(stats: SystemStats): void {
