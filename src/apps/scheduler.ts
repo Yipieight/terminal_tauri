@@ -159,7 +159,7 @@ export function mountScheduler(
   container: HTMLElement,
   algo: SchedAlgo,
   quantum: number,
-  _instanceId: string,
+  instanceId: string,
 ): void {
   container.style.display = "flex";
   container.style.flexDirection = "row";
@@ -195,6 +195,8 @@ export function mountScheduler(
   let animTime = 0;
   let speed = 0.025;
   let statsShown = false;
+  let isAnalyzing  = false;
+  let lastAnalysis = "";
   const Q = quantum > 0 ? quantum : 2;
 
   // ── State colors / labels ──
@@ -540,6 +542,12 @@ export function mountScheduler(
 
   // ── Info panel (DOM, right side) ─────────────────────────────────────────
   function updateInfoPanel(): void {
+    if (isAnalyzing && lastAnalysis) {
+      // Only update the streaming panel, not the whole info panel
+      const panel = infoPanel.querySelector(".ai-analysis-panel");
+      if (panel) panel.textContent = lastAnalysis;
+      return;
+    }
     const t = Math.floor(animTime);
     const current = gantt[t];
     const runPid   = current && !current.idle ? current.pid : null;
@@ -589,11 +597,66 @@ export function mountScheduler(
         <div class="tv-stat"><span>Avg Retorno:</span><strong style="color:#32D2D2">${avgT}</strong></div>
         ` : ""}
       </div>
+      <button class="ai-analyze-btn" id="sched-ai-btn-${instanceId}" ${isAnalyzing ? 'disabled' : ''}>
+        ${isAnalyzing ? '🤖 Analizando...' : '🤖 Analizar'}
+      </button>
+      ${lastAnalysis ? `<div class="ai-analysis-panel">${lastAnalysis}</div>` : ''}
       <div style="margin-top:8px;font-size:9px;color:#555;border-top:1px solid #2a2a3a;padding-top:6px">
         SPACE: reiniciar<br>
         +&nbsp;/&nbsp;−: velocidad
       </div>
     `;
+
+    const aiBtn = infoPanel.querySelector<HTMLButtonElement>(`#sched-ai-btn-${instanceId}`);
+    if (aiBtn && !isAnalyzing) {
+      aiBtn.addEventListener("click", async () => {
+        if (isAnalyzing) return;
+        isAnalyzing  = true;
+        lastAnalysis = "";
+        updateInfoPanel();
+
+        const { analyzeScheduler, logSessionEvent } = await import("../ai/aiService");
+        const doneProcs = procs.filter((p) => p.state === "terminated");
+        const avgW = doneProcs.length
+          ? doneProcs.reduce((s, p) => s + p.waitTime, 0) / doneProcs.length
+          : 0;
+        const avgT = doneProcs.length
+          ? doneProcs.reduce((s, p) => s + p.turnaround, 0) / doneProcs.length
+          : 0;
+
+        analyzeScheduler(
+          {
+            algo: algo,
+            quantum: Q,
+            processes: procs.map((p) => ({
+              id: p.id, at: p.at, bt: p.bt, pri: p.pri,
+              waitTime: p.waitTime, turnaround: p.turnaround,
+            })),
+            avgWait: avgW,
+            avgTurnaround: avgT,
+            ganttLength: gantt.length,
+          },
+          (token) => {
+            lastAnalysis += token;
+            const panel = infoPanel.querySelector(".ai-analysis-panel");
+            if (panel) panel.textContent = lastAnalysis;
+          },
+          () => {
+            isAnalyzing = false;
+            updateInfoPanel();
+            logSessionEvent({
+              type: "schedule",
+              data: { algo, quantum: Q, avgWait: avgW, avgTurnaround: avgT },
+            });
+          },
+          (err) => {
+            lastAnalysis = `⚠️ ${err}`;
+            isAnalyzing  = false;
+            updateInfoPanel();
+          },
+        );
+      });
+    }
   }
 
   // ── Main render loop ──────────────────────────────────────────────────────

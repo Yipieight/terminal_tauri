@@ -165,6 +165,8 @@ export function mountSingleMode(container: HTMLElement, mode: SimMode, param: nu
   let raceTimer = 0;
   let deadlocked = false;
   let deadTimer = 0;
+  let isAnalyzing  = false;
+  let lastAnalysis = "";
 
   function resize(): void {
     const rect = canvasWrap.getBoundingClientRect();
@@ -509,6 +511,11 @@ export function mountSingleMode(container: HTMLElement, mode: SimMode, param: nu
   // ── Info panel ──
 
   function updateInfo(): void {
+    if (isAnalyzing && lastAnalysis) {
+      const panel = info.querySelector(".ai-analysis-panel");
+      if (panel) panel.textContent = lastAnalysis;
+      return;
+    }
     let statusHTML = "";
     switch (mode) {
       case "semaphore":
@@ -536,7 +543,34 @@ export function mountSingleMode(container: HTMLElement, mode: SimMode, param: nu
       <div class="tv-info-primitive">${MODE_PRIMITIVES[mode]}</div>
       <div class="tv-info-desc">${MODE_DESCRIPTIONS[mode].replace(/\n/g, "<br>")}</div>
       <div class="tv-info-stats">${statusHTML}</div>
+      <button class="ai-analyze-btn" id="tv-ai-btn-${instanceId}" ${isAnalyzing ? 'disabled' : ''}>
+        ${isAnalyzing ? '🤖 Analizando...' : '🤖 Analizar'}
+      </button>
+      ${lastAnalysis ? `<div class="ai-analysis-panel">${lastAnalysis}</div>` : ''}
     `;
+
+    const aiBtn = info.querySelector<HTMLButtonElement>(`#tv-ai-btn-${instanceId}`);
+    if (aiBtn && !isAnalyzing) {
+      aiBtn.addEventListener("click", async () => {
+        if (isAnalyzing) return;
+        isAnalyzing  = true;
+        lastAnalysis = "";
+        updateInfo();
+
+        const { analyzeThreadSim } = await import("../ai/aiService");
+        const description = MODE_DESCRIPTIONS[mode] ?? mode;
+        analyzeThreadSim(
+          { mode, param, description },
+          (token) => {
+            lastAnalysis += token;
+            const panel = info.querySelector(".ai-analysis-panel");
+            if (panel) panel.textContent = lastAnalysis;
+          },
+          () => { isAnalyzing = false; updateInfo(); },
+          (err) => { lastAnalysis = `⚠️ ${err}`; isAnalyzing = false; updateInfo(); },
+        );
+      });
+    }
   }
 
   // ── Main loop ──
