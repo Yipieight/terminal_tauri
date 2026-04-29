@@ -41,7 +41,7 @@ export function logSessionEvent(event: Omit<SessionEvent, "timestamp">): void {
   sessionLog.push({ ...event, timestamp: Date.now() });
 }
 export function getSessionLog(): SessionEvent[] {
-  return sessionLog;
+  return [...sessionLog];
 }
 export function getSessionStartTime(): number {
   return sessionStart;
@@ -104,7 +104,11 @@ export async function streamAI(
 
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-    const reader  = res.body!.getReader();
+    if (!res.body) {
+      onError("El servidor no devolvió un stream de respuesta.");
+      return;
+    }
+    const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let   sseBuffer = "";
 
@@ -169,7 +173,7 @@ export async function parseNLPCommand(
           .replace(/```\s*/g, "")
           .trim();
         // Find first {...} block
-        const match = cleaned.match(/\{[\s\S]*?\}/);
+        const match = cleaned.match(/\{[\s\S]*\}/);
         if (match) {
           try {
             const parsed = JSON.parse(match[0]) as { command?: string; explanation?: string };

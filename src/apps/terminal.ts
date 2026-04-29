@@ -20,7 +20,7 @@ import type { CommandResult } from "../types";
 // ── AI configuration (persisted in localStorage) ─────────────────────────
 const AI_URL_KEY = "mishell_ai_url";
 function getAIBaseUrl(): string {
-  return localStorage.getItem(AI_URL_KEY) ?? "http://localhost:1234/v1";
+  return localStorage.getItem(AI_URL_KEY) ?? "http://127.0.0.1:1234/v1";
 }
 
 export function mountTerminal(container: HTMLElement): void {

@@ -151,6 +151,8 @@ fn fs_get_tree(path: &str, depth: u32, state: State<'_, FsState>) -> Result<FsTr
 fn fs_write_file(path: &str, content: &str, state: State<'_, FsState>) -> Result<(), String> {
     let mut fs = state.fs.lock().map_err(|e| e.to_string())?;
     let result = fs.write_file(path, content);
+    drop(fs);
+    state.save();
     if result.exit_code != 0 {
         Err(result.stderr)
     } else {
