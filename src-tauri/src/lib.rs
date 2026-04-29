@@ -147,6 +147,17 @@ fn fs_get_tree(path: &str, depth: u32, state: State<'_, FsState>) -> Result<FsTr
     fs.get_tree(path, depth)
 }
 
+#[tauri::command]
+fn fs_write_file(path: &str, content: &str, state: State<'_, FsState>) -> Result<(), String> {
+    let mut fs = state.fs.lock().map_err(|e| e.to_string())?;
+    let result = fs.write_file(path, content);
+    if result.exit_code != 0 {
+        Err(result.stderr)
+    } else {
+        Ok(())
+    }
+}
+
 /// System statistics for the Task Manager.
 /// Returns filesystem stats, memory usage estimates, history count, and uptime.
 ///
@@ -328,6 +339,7 @@ pub fn run() {
             fs_delete,
             fs_rename,
             fs_get_tree,
+            fs_write_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

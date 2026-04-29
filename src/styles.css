@@ -751,6 +751,55 @@ html, body {
   word-break: break-word;
 }
 
+/* AI analyze button — used in scheduler, thread visualizer, task manager */
+.ai-analyze-btn {
+  width: 100%;
+  padding: 6px 8px;
+  background: linear-gradient(135deg, #6b2fc4, #4a1f8a);
+  color: #d8c8ff;
+  border: 1px solid #8855dd;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  font-family: "Lucida Console", "Consolas", monospace;
+  margin-top: 8px;
+  transition: opacity 0.15s;
+}
+.ai-analyze-btn:hover:not(:disabled) {
+  opacity: 0.85;
+}
+.ai-analyze-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* AI analysis response panel — inside info panels and task manager */
+.ai-analysis-panel {
+  margin-top: 8px;
+  padding: 8px;
+  background: rgba(100, 50, 200, 0.1);
+  border-left: 3px solid #8855dd;
+  border-radius: 0 4px 4px 0;
+  color: #d8c8ff;
+  font-size: 10px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* NLP suggestion block shown in terminal output */
+.nlp-suggestion {
+  border-left: 3px solid #f0b41e;
+  padding: 6px 10px;
+  background: rgba(240, 180, 30, 0.08);
+  color: #f0e090;
+  white-space: pre-wrap;
+}
+.nlp-confirm {
+  color: #888;
+  font-style: italic;
+}
+
 /* Autocomplete suggestions */
 .terminal-autocomplete {
   display: none;
