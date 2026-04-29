@@ -546,8 +546,13 @@ export function mountSingleMode(container: HTMLElement, mode: SimMode, param: nu
       <button class="ai-analyze-btn" id="tv-ai-btn-${instanceId}" ${isAnalyzing ? 'disabled' : ''}>
         ${isAnalyzing ? '🤖 Analizando...' : '🤖 Analizar'}
       </button>
-      ${lastAnalysis ? `<div class="ai-analysis-panel">${lastAnalysis}</div>` : ''}
+      ${isAnalyzing || lastAnalysis ? `<div class="ai-analysis-panel"></div>` : ''}
     `;
+
+    if (lastAnalysis) {
+      const panel = info.querySelector(".ai-analysis-panel");
+      if (panel) panel.textContent = lastAnalysis;
+    }
 
     const aiBtn = info.querySelector<HTMLButtonElement>(`#tv-ai-btn-${instanceId}`);
     if (aiBtn && !isAnalyzing) {

@@ -226,6 +226,8 @@ export function mountScheduler(
   }
 
   function init(): void {
+    isAnalyzing  = false;
+    lastAnalysis = "";
     procs = makeProcs();
     gantt = computeSchedule(procs, algo, Q);
     computeStats(procs, gantt);
@@ -600,12 +602,17 @@ export function mountScheduler(
       <button class="ai-analyze-btn" id="sched-ai-btn-${instanceId}" ${isAnalyzing ? 'disabled' : ''}>
         ${isAnalyzing ? '🤖 Analizando...' : '🤖 Analizar'}
       </button>
-      ${lastAnalysis ? `<div class="ai-analysis-panel">${lastAnalysis}</div>` : ''}
+      ${isAnalyzing || lastAnalysis ? `<div class="ai-analysis-panel"></div>` : ''}
       <div style="margin-top:8px;font-size:9px;color:#555;border-top:1px solid #2a2a3a;padding-top:6px">
         SPACE: reiniciar<br>
         +&nbsp;/&nbsp;−: velocidad
       </div>
     `;
+
+    if (lastAnalysis) {
+      const panel = infoPanel.querySelector(".ai-analysis-panel");
+      if (panel) panel.textContent = lastAnalysis;
+    }
 
     const aiBtn = infoPanel.querySelector<HTMLButtonElement>(`#sched-ai-btn-${instanceId}`);
     if (aiBtn && !isAnalyzing) {
@@ -616,12 +623,11 @@ export function mountScheduler(
         updateInfoPanel();
 
         const { analyzeScheduler, logSessionEvent } = await import("../ai/aiService");
-        const doneProcs = procs.filter((p) => p.state === "terminated");
-        const avgW = doneProcs.length
-          ? doneProcs.reduce((s, p) => s + p.waitTime, 0) / doneProcs.length
+        const avgW = procs.length
+          ? procs.reduce((s, p) => s + p.waitTime, 0) / procs.length
           : 0;
-        const avgT = doneProcs.length
-          ? doneProcs.reduce((s, p) => s + p.turnaround, 0) / doneProcs.length
+        const avgT = procs.length
+          ? procs.reduce((s, p) => s + p.turnaround, 0) / procs.length
           : 0;
 
         analyzeScheduler(
