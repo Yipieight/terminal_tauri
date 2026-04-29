@@ -301,7 +301,7 @@ ${"─".repeat(50)}`;
     if (isNLPAutoMode() && !isDestructive) {
       // Auto-execute without confirmation
       appendText(`⚡ Auto: ${command}`, "nlp-suggestion");
-      await executeCommand(command);
+      await executeCommand(command, true);
       logSessionEvent({ type: "command", data: { input: `?? ${phrase}`, generated: command } });
       return;
     }
@@ -327,7 +327,7 @@ ${"─".repeat(50)}`;
 
   // ── Command executor ───────────────────────────────────────────────────
 
-  async function executeCommand(rawInput: string): Promise<void> {
+  async function executeCommand(rawInput: string, _skipSessionLog = false): Promise<void> {
     const trimmed = rawInput.trim();
     if (!trimmed) return;
 
@@ -448,12 +448,14 @@ ${"─".repeat(50)}`;
     }
 
     // Log for ai report session tracking
-    import("../ai/aiService").then(({ logSessionEvent }) => {
-      logSessionEvent({
-        type: "command",
-        data: { input: trimmed, exitCode: 0 },
-      });
-    }).catch(() => {/* ignore */});
+    if (!_skipSessionLog) {
+      import("../ai/aiService").then(({ logSessionEvent }) => {
+        logSessionEvent({
+          type: "command",
+          data: { input: trimmed, exitCode: 0 },
+        });
+      }).catch(() => {/* ignore */});
+    }
 
     await updatePrompt();
   }
@@ -494,29 +496,28 @@ ${"─".repeat(50)}`;
     // ── NLP confirmation handler ──────────────────────────────────────────
     if (pendingNLPIsActive) {
       const key = e.key.toUpperCase();
-      if (!["Y", "N", "E", "A", "ENTER"].includes(key)) return;
+      if (!["Y", "N", "E", "A", "ENTER", "ESCAPE"].includes(key)) return;
       e.preventDefault();
 
       const { setNLPAutoMode, logSessionEvent } = await import("../ai/aiService");
       const cmd = pendingNLPCommand;
       pendingNLPIsActive = false;
       pendingNLPCommand  = "";
+      input.value = "";
 
       if (key === "Y" || key === "ENTER") {
-        appendText(`$ ${cmd}`, "command-line");
-        await executeCommand(cmd);
+        await executeCommand(cmd, true);
         logSessionEvent({ type: "command", data: { input: `?? (confirmed)`, generated: cmd } });
       } else if (key === "A") {
         setNLPAutoMode(true);
         appendText("✓ Modo auto-execute activado. Usa 'ai --nlp-auto off' para desactivar.", "system-msg");
-        appendText(`$ ${cmd}`, "command-line");
-        await executeCommand(cmd);
+        await executeCommand(cmd, true);
         logSessionEvent({ type: "command", data: { input: `?? (auto-on)`, generated: cmd } });
       } else if (key === "E") {
         input.value = cmd;
         appendText("← Comando copiado al input para editar.", "system-msg");
       } else {
-        // N
+        // N or Escape — cancel
         appendText("Cancelado.", "system-msg");
       }
       await updatePrompt();
